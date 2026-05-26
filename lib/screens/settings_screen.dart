@@ -64,8 +64,9 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   /// Shows a confirmation dialog before deleting all data.
-  void _showDeleteConfirmationDialog(BuildContext context, WidgetRef ref) {
-    showDialog<bool>(
+  Future<void> _showDeleteConfirmationDialog(
+      BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
@@ -90,11 +91,11 @@ class SettingsScreen extends ConsumerWidget {
           ],
         );
       },
-    ).then((confirmed) {
-      if (confirmed == true) {
-        _deleteAllData(context, ref);
-      }
-    });
+    );
+
+    if (confirmed == true && context.mounted) {
+      _deleteAllData(context, ref);
+    }
   }
 
   /// Performs atomic deletion of all telemetry data and shows feedback.

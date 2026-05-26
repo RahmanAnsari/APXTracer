@@ -11,7 +11,6 @@ import 'data/track_repository.dart';
 import 'engines/analytics/analytics_engine.dart';
 import 'engines/lap_detection/lap_detection_engine.dart';
 import 'engines/post_session_pipeline.dart';
-import 'engines/recording/recording_engine.dart';
 import 'engines/track_discovery/track_discovery_engine.dart';
 import 'providers/recording_provider.dart';
 
@@ -29,11 +28,6 @@ void main() {
   final analyticsRepository = AnalyticsRepository(databaseHelper);
 
   // Create engine instances.
-  final recordingEngine = RecordingEngine(
-    sessionRepository: sessionRepository,
-    gpsSampleRepository: gpsSampleRepository,
-  );
-
   final trackDiscoveryEngine = TrackDiscoveryEngine(
     trackRepository: trackRepository,
     sessionRepository: sessionRepository,
@@ -56,7 +50,6 @@ void main() {
   runApp(
     ProviderScope(
       overrides: [
-        recordingEngineProvider.overrideWithValue(recordingEngine),
         postSessionPipelineProvider.overrideWithValue(postSessionPipeline),
       ],
       child: const ApxTracerApp(),

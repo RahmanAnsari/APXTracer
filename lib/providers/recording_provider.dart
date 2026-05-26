@@ -2,10 +2,14 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../engines/fusion/fusion_engine.dart';
 import '../engines/post_session_pipeline.dart';
 import '../engines/recording/recording_engine.dart';
 import '../engines/recording/recording_messages.dart';
 import '../models/session.dart';
+import 'analytics_provider.dart';
+import 'fusion_provider.dart';
+import 'session_provider.dart';
 
 /// The possible states of the recording lifecycle.
 enum RecordingStatus {
@@ -226,10 +230,29 @@ final recordingUpdatesProvider = StreamProvider<RecordingUpdate>((ref) {
 
 /// Provider for the recording engine instance.
 ///
-/// Must be overridden in the ProviderScope with the actual implementation.
+/// Watches [fusionEngineProvider] to inject the optional [FusionEngine]
+/// into [RecordingEngine]. When fusion is unavailable (e.g., no IMU hardware),
+/// the engine operates in GPS-only mode.
+///
+/// Can be overridden in the ProviderScope for testing.
 final recordingEngineProvider = Provider<IRecordingEngine>((ref) {
-  throw UnimplementedError(
-    'recordingEngineProvider must be overridden with an actual IRecordingEngine implementation',
+  final sessionRepository = ref.watch(sessionRepositoryProvider);
+  final gpsSampleRepository = ref.watch(gpsSampleRepositoryProvider);
+
+  // Attempt to obtain the FusionEngine. If the provider is unavailable
+  // or throws, fall back to GPS-only mode (fusionEngine = null).
+  FusionEngine? fusionEngine;
+  try {
+    fusionEngine = ref.watch(fusionEngineProvider);
+  } catch (_) {
+    // FusionEngine unavailable — proceed in GPS-only mode.
+    fusionEngine = null;
+  }
+
+  return RecordingEngine(
+    sessionRepository: sessionRepository,
+    gpsSampleRepository: gpsSampleRepository,
+    fusionEngine: fusionEngine,
   );
 });
 

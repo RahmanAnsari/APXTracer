@@ -53,6 +53,8 @@
 	<string>APXTracer needs your location to record GPS telemetry during driving sessions.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>APXTracer needs your location to continue recording GPS telemetry while the app is in the background.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>ApxTracer uses motion sensors to provide high-frequency telemetry and smooth position tracking during recording sessions.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
