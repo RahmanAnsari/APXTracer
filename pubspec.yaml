@@ -1,0 +1,70 @@
+name: apx_tracer
+description: "APXTracer - Personal motorsport telemetry application for GPS recording, track discovery, lap timing, and performance analytics."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Encrypted local database
+  sqflite_sqlcipher: ^3.1.0+1
+
+  # Secure key storage
+  flutter_secure_storage: ^9.2.4
+
+  # GPS location services
+  geolocator: ^13.0.2
+
+  # State management
+  flutter_riverpod: ^2.6.1
+
+  # Routing
+  go_router: ^14.8.1
+
+  # Map visualization
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+
+  # Charts
+  fl_chart: ^0.70.2
+
+  # Google Sign-In and Drive API
+  google_sign_in: ^6.2.2
+  googleapis: ^13.2.0
+  googleapis_auth: ^1.6.0
+  http: ^1.2.0
+
+  # Platform share sheet
+  share_plus: ^10.1.4
+
+  # UUID generation
+  uuid: ^4.5.1
+
+  # File path utilities
+  path_provider: ^2.1.5
+
+  # Date/time formatting
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+  # Mocking
+  mockito: ^5.4.5
+  mocktail: ^1.0.4
+
+  # Code generation for mockito
+  build_runner: ^2.4.14
+
+flutter:
+  uses-material-design: true

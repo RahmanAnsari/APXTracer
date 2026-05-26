@@ -1,0 +1,170 @@
+import 'package:latlong2/latlong.dart';
+import 'package:uuid/uuid.dart';
+
+import '../../data/session_repository.dart';
+import '../../data/track_repository.dart';
+import '../../models/gps_sample.dart';
+import '../../models/sector_boundary.dart';
+import '../../models/session.dart';
+import '../../models/track.dart';
+import '../../utils/haversine.dart';
+import '../../utils/polyline_utils.dart';
+
+/// Interface for the Track Discovery Engine.
+///
+/// Analyzes GPS paths to detect closed-loop circuits and generate
+/// track geometry with sector boundaries.
+abstract class ITrackDiscoveryEngine {
+  /// Analyzes a session's GPS path for closed-loop detection.
+  /// Returns the discovered or matched Track, or null if no closed loop.
+  Future<Track?> discoverTrack(Session session, List<GpsSample> samples);
+
+  /// Splits a track into 3 sectors at 1/3 and 2/3 polyline distance.
+  /// Returns sector boundary points as polyline distance fractions.
+  List<SectorBoundary> computeSectors(Track track);
+}
+
+/// Minimum number of GPS samples required for closed-loop detection.
+const int _minSamplesForClosedLoop = 20;
+
+/// Maximum Haversine distance (meters) between first and last sample
+/// for closed-loop detection.
+const double _closedLoopThresholdMeters = 50.0;
+
+/// Implementation of [ITrackDiscoveryEngine].
+///
+/// Detects closed-loop circuits from GPS paths, matches against existing
+/// tracks, and computes sector boundaries at 1/3 and 2/3 polyline distance.
+class TrackDiscoveryEngine implements ITrackDiscoveryEngine {
+  final TrackRepository _trackRepository;
+  final SessionRepository _sessionRepository;
+  final Uuid _uuid;
+
+  // ignore: prefer_initializing_formals
+  TrackDiscoveryEngine({
+    required TrackRepository trackRepository,
+    required SessionRepository sessionRepository,
+    Uuid? uuid,
+  })  : _trackRepository = trackRepository,
+        _sessionRepository = sessionRepository,
+        _uuid = uuid ?? const Uuid();
+
+  @override
+  Future<Track?> discoverTrack(
+      Session session, List<GpsSample> samples) async {
+    // Need at least the minimum number of samples for closed-loop detection
+    if (samples.length < _minSamplesForClosedLoop) {
+      return null;
+    }
+
+    final firstSample = samples.first;
+    final lastSample = samples.last;
+
+    // Calculate Haversine distance between first and last GPS sample
+    final distance = haversineDistance(
+      firstSample.latitude,
+      firstSample.longitude,
+      lastSample.latitude,
+      lastSample.longitude,
+    );
+
+    // Check if the path forms a closed loop
+    if (distance > _closedLoopThresholdMeters) {
+      return null; // No closed loop detected
+    }
+
+    // Generate track polyline from GPS path
+    final polyline =
+        samples.map((s) => LatLng(s.latitude, s.longitude)).toList();
+
+    // Use the first sample as the start/finish point
+    final startFinish = LatLng(firstSample.latitude, firstSample.longitude);
+
+    // Query existing tracks for a match within 50m of start/finish
+    final nearbyTracks = await _trackRepository.findNearby(
+      startFinish.latitude,
+      startFinish.longitude,
+    );
+
+    if (nearbyTracks.isNotEmpty) {
+      // Match found - associate session with existing track
+      final existingTrack = nearbyTracks.first;
+      final updatedTrack = Track(
+        id: existingTrack.id,
+        name: existingTrack.name,
+        polyline: existingTrack.polyline,
+        startFinish: existingTrack.startFinish,
+        sector1Fraction: existingTrack.sector1Fraction,
+        sector2Fraction: existingTrack.sector2Fraction,
+        sessionCount: existingTrack.sessionCount + 1,
+        lastDriven: session.startTime,
+      );
+      await _trackRepository.update(updatedTrack);
+
+      // Update session with track ID
+      final updatedSession = Session(
+        id: session.id,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        durationMs: session.durationMs,
+        trackId: updatedTrack.id,
+      );
+      await _sessionRepository.update(updatedSession);
+
+      return updatedTrack;
+    }
+
+    // No match found - create a new track
+    final newTrack = Track(
+      id: _uuid.v4(),
+      polyline: polyline,
+      startFinish: startFinish,
+      sector1Fraction: 1 / 3,
+      sector2Fraction: 2 / 3,
+      sessionCount: 1,
+      lastDriven: session.startTime,
+    );
+    await _trackRepository.insert(newTrack);
+
+    // Update session with track ID
+    final updatedSession = Session(
+      id: session.id,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      durationMs: session.durationMs,
+      trackId: newTrack.id,
+    );
+    await _sessionRepository.update(updatedSession);
+
+    return newTrack;
+  }
+
+  @override
+  List<SectorBoundary> computeSectors(Track track) {
+    final points = track.polyline;
+
+    // Cannot compute sectors without at least 2 points
+    if (points.length < 2) {
+      return [];
+    }
+
+    // Sector boundaries at 1/3 and 2/3 cumulative polyline distance
+    const double sector1Fraction = 1 / 3;
+    const double sector2Fraction = 2 / 3;
+
+    // Interpolate geographic points at the sector boundary fractions
+    final sector1Point = pointAtFraction(points, sector1Fraction);
+    final sector2Point = pointAtFraction(points, sector2Fraction);
+
+    return [
+      SectorBoundary(
+        polylineFraction: sector1Fraction,
+        point: sector1Point,
+      ),
+      SectorBoundary(
+        polylineFraction: sector2Fraction,
+        point: sector2Point,
+      ),
+    ];
+  }
+}
