@@ -377,6 +377,8 @@ void main() {
       when(() => mockLapDetection.computeSectorTimes(any(), any(), any()))
           .thenAnswer((_) async => sectorTimes);
       when(() => mockLapRepo.insertBatch(any())).thenAnswer((_) async {});
+      when(() => mockTrackDiscovery.refineCircuit(any(), any()))
+          .thenAnswer((_) async => track);
       when(() => mockAnalytics.computeAnalytics(any(), any(), any(), any()))
           .thenAnswer((_) async => analytics);
 

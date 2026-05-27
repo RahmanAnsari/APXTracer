@@ -1,4 +1,7 @@
-/// Represents a single completed circuit of a Track within a Session.
+/// Represents a single lap within a Session.
+///
+/// A lap is either complete (crossed start/finish twice) or incomplete
+/// (crossed start/finish once but the session ended before the next crossing).
 class Lap {
   final String id;
   final String sessionId;
@@ -12,6 +15,11 @@ class Lap {
   final int? sector3Ms;
   final bool isBestLap;
 
+  /// True when the driver crossed the start/finish line but the session ended
+  /// before they completed the lap. Displayed as "Returned to pit".
+  /// Incomplete laps are never eligible for best-lap.
+  final bool isIncomplete;
+
   const Lap({
     required this.id,
     required this.sessionId,
@@ -24,6 +32,7 @@ class Lap {
     this.sector2Ms,
     this.sector3Ms,
     this.isBestLap = false,
+    this.isIncomplete = false,
   });
 
   /// Serializes this lap to a map for database storage.
@@ -40,6 +49,7 @@ class Lap {
       'sector2_ms': sector2Ms,
       'sector3_ms': sector3Ms,
       'is_best_lap': isBestLap ? 1 : 0,
+      'is_incomplete': isIncomplete ? 1 : 0,
     };
   }
 
@@ -57,6 +67,7 @@ class Lap {
       sector2Ms: map['sector2_ms'] != null ? map['sector2_ms'] as int : null,
       sector3Ms: map['sector3_ms'] != null ? map['sector3_ms'] as int : null,
       isBestLap: map['is_best_lap'] == 1,
+      isIncomplete: map['is_incomplete'] == 1,
     );
   }
 }

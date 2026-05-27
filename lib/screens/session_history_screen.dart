@@ -107,6 +107,50 @@ class _SessionList extends StatelessWidget {
   }
 }
 
+String _formatSessionDate(int epochMs) {
+  final date = DateTime.fromMillisecondsSinceEpoch(epochMs);
+  final now = DateTime.now();
+  final diff = now.difference(date);
+  if (diff.inDays == 0) return 'Today at ${_timeOfDay(date)}';
+  if (diff.inDays == 1) return 'Yesterday at ${_timeOfDay(date)}';
+  return '${date.day}/${date.month}/${date.year} at ${_timeOfDay(date)}';
+}
+
+String _timeOfDay(DateTime date) =>
+    '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+
+Future<String?> _showRenameDialog(BuildContext context, String? currentName) {
+  final controller = TextEditingController(text: currentName ?? '');
+  return showDialog<String?>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Rename Session'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        decoration: const InputDecoration(
+          hintText: 'Session name',
+          border: OutlineInputBorder(),
+        ),
+        onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  ).then((result) {
+    controller.dispose();
+    return result;
+  });
+}
+
 /// A single session card displaying date and key metrics.
 /// Tapping navigates to the Session Detail screen.
 /// Swipe left to delete with confirmation.
@@ -187,7 +231,7 @@ class _SessionCard extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Date header
+              // Name / date header with inline rename action
               Row(
                 children: [
                   Icon(
@@ -196,13 +240,42 @@ class _SessionCard extends ConsumerWidget {
                     color: theme.colorScheme.primary,
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    _formatSessionDate(session.startTime),
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          session.name ?? _formatSessionDate(session.startTime),
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (session.name != null)
+                          Text(
+                            _formatSessionDate(session.startTime),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    color: theme.colorScheme.onSurfaceVariant,
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Rename',
+                    onPressed: () async {
+                      final newName =
+                          await _showRenameDialog(context, session.name);
+                      if (newName == null || !context.mounted) return;
+                      final repo = ref.read(sessionRepositoryProvider);
+                      await repo.rename(
+                          session.id, newName.isEmpty ? null : newName);
+                      ref.invalidate(sessionsProvider);
+                    },
+                  ),
                   Icon(
                     Icons.chevron_right,
                     color: theme.colorScheme.onSurfaceVariant,
@@ -239,23 +312,6 @@ class _SessionCard extends ConsumerWidget {
     );
   }
 
-  String _formatSessionDate(int epochMs) {
-    final date = DateTime.fromMillisecondsSinceEpoch(epochMs);
-    final now = DateTime.now();
-    final diff = now.difference(date);
-
-    if (diff.inDays == 0) {
-      return 'Today at ${_timeOfDay(date)}';
-    } else if (diff.inDays == 1) {
-      return 'Yesterday at ${_timeOfDay(date)}';
-    } else {
-      return '${date.day}/${date.month}/${date.year} at ${_timeOfDay(date)}';
-    }
-  }
-
-  String _timeOfDay(DateTime date) {
-    return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-  }
 }
 
 /// Grid of session metrics: duration, best lap, total laps, distance, top speed.

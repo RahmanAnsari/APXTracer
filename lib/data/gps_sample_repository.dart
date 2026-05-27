@@ -63,4 +63,34 @@ class GpsSampleRepository {
       whereArgs: [sessionId],
     );
   }
+
+  /// Deletes all GPS samples for a session with timestamp strictly before
+  /// [beforeTimestampMs]. Used to strip the stationary prefix recorded
+  /// before physical movement begins.
+  Future<void> deleteBeforeTimestamp(
+    String sessionId,
+    int beforeTimestampMs,
+  ) async {
+    final db = await _databaseHelper.database;
+    await db.delete(
+      'gps_samples',
+      where: 'session_id = ? AND timestamp < ?',
+      whereArgs: [sessionId, beforeTimestampMs],
+    );
+  }
+
+  /// Deletes all GPS samples for a session with timestamp strictly after
+  /// [afterTimestampMs]. Used to strip the stationary suffix recorded
+  /// after the car stopped moving at the end of a session.
+  Future<void> deleteAfterTimestamp(
+    String sessionId,
+    int afterTimestampMs,
+  ) async {
+    final db = await _databaseHelper.database;
+    await db.delete(
+      'gps_samples',
+      where: 'session_id = ? AND timestamp > ?',
+      whereArgs: [sessionId, afterTimestampMs],
+    );
+  }
 }

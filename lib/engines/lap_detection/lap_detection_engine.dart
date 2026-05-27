@@ -69,10 +69,11 @@ class LapDetectionEngine implements ILapDetectionEngine {
     // Find all crossing timestamps using closest-approach method
     final crossingTimestamps = _detectCrossings(samples, startFinish);
 
-    if (crossingTimestamps.length < 2) return [];
+    // No crossings at all — driver never passed the start/finish line
+    if (crossingTimestamps.isEmpty) return [];
 
-    // Build laps from consecutive crossings, filtering false detections
-    final laps = <Lap>[];
+    // Build complete laps from consecutive crossings, filtering false detections
+    final completeLaps = <Lap>[];
     int lapNumber = 1;
 
     for (int i = 0; i < crossingTimestamps.length - 1; i++) {
@@ -83,9 +84,9 @@ class LapDetectionEngine implements ILapDetectionEngine {
       // Filter false detections: discard laps with time < 10 seconds
       if (lapTimeMs < _minLapTimeMs) continue;
 
-      laps.add(Lap(
+      completeLaps.add(Lap(
         id: _uuid.v4(),
-        sessionId: '', // Will be set by caller or pipeline
+        sessionId: '',
         trackId: track.id,
         lapNumber: lapNumber,
         startTimestamp: startTs,
@@ -95,34 +96,49 @@ class LapDetectionEngine implements ILapDetectionEngine {
       lapNumber++;
     }
 
-    if (laps.isEmpty) return [];
-
-    // Identify best lap (minimum lap time)
-    int bestLapIndex = 0;
-    int bestLapTime = laps[0].lapTimeMs;
-    for (int i = 1; i < laps.length; i++) {
-      if (laps[i].lapTimeMs < bestLapTime) {
-        bestLapTime = laps[i].lapTimeMs;
-        bestLapIndex = i;
+    // Mark best lap among complete laps only (incomplete laps are never eligible)
+    final result = <Lap>[];
+    if (completeLaps.isNotEmpty) {
+      int bestLapIndex = 0;
+      int bestLapTime = completeLaps[0].lapTimeMs;
+      for (int i = 1; i < completeLaps.length; i++) {
+        if (completeLaps[i].lapTimeMs < bestLapTime) {
+          bestLapTime = completeLaps[i].lapTimeMs;
+          bestLapIndex = i;
+        }
+      }
+      for (int i = 0; i < completeLaps.length; i++) {
+        final lap = completeLaps[i];
+        result.add(Lap(
+          id: lap.id,
+          sessionId: lap.sessionId,
+          trackId: lap.trackId,
+          lapNumber: lap.lapNumber,
+          startTimestamp: lap.startTimestamp,
+          endTimestamp: lap.endTimestamp,
+          lapTimeMs: lap.lapTimeMs,
+          isBestLap: i == bestLapIndex,
+        ));
       }
     }
 
-    // Rebuild list with isBestLap flag set on the best lap
-    final result = <Lap>[];
-    for (int i = 0; i < laps.length; i++) {
-      final lap = laps[i];
+    // Detect incomplete last lap: driver crossed start/finish but the session
+    // ended before they completed the circuit ("returned to pit").
+    final lastCrossingTs = crossingTimestamps.last;
+    final lastSampleTs = samples.last.timestamp;
+    final incompleteTimeMs = lastSampleTs - lastCrossingTs;
+
+    if (incompleteTimeMs >= _minLapTimeMs) {
       result.add(Lap(
-        id: lap.id,
-        sessionId: lap.sessionId,
-        trackId: lap.trackId,
-        lapNumber: lap.lapNumber,
-        startTimestamp: lap.startTimestamp,
-        endTimestamp: lap.endTimestamp,
-        lapTimeMs: lap.lapTimeMs,
-        sector1Ms: lap.sector1Ms,
-        sector2Ms: lap.sector2Ms,
-        sector3Ms: lap.sector3Ms,
-        isBestLap: i == bestLapIndex,
+        id: _uuid.v4(),
+        sessionId: '',
+        trackId: track.id,
+        lapNumber: lapNumber,
+        startTimestamp: lastCrossingTs,
+        endTimestamp: lastSampleTs,
+        lapTimeMs: incompleteTimeMs,
+        isIncomplete: true,
+        isBestLap: false,
       ));
     }
 

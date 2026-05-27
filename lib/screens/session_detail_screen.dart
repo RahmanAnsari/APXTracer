@@ -5,11 +5,56 @@ import 'package:go_router/go_router.dart';
 
 import '../models/gps_sample.dart';
 import '../models/lap.dart';
+import '../models/session.dart';
 import '../models/session_analytics.dart';
 import '../providers/analytics_provider.dart';
 import '../providers/export_provider.dart';
 import '../providers/session_provider.dart';
 import '../utils/time_formatter.dart';
+
+String _formatSessionDate(int epochMs) {
+  final date = DateTime.fromMillisecondsSinceEpoch(epochMs);
+  final now = DateTime.now();
+  final diff = now.difference(date);
+  if (diff.inDays == 0) return 'Today at ${_tod(date)}';
+  if (diff.inDays == 1) return 'Yesterday at ${_tod(date)}';
+  return '${date.day}/${date.month}/${date.year}';
+}
+
+String _tod(DateTime d) =>
+    '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+Future<String?> _showRenameDialog(BuildContext context, String? currentName) {
+  final controller = TextEditingController(text: currentName ?? '');
+  return showDialog<String?>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Rename Session'),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        decoration: const InputDecoration(
+          hintText: 'Session name',
+          border: OutlineInputBorder(),
+        ),
+        onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+          child: const Text('Save'),
+        ),
+      ],
+    ),
+  ).then((result) {
+    controller.dispose();
+    return result;
+  });
+}
 
 /// Provides GPS samples for a given session ID.
 final gpsSamplesProvider =
@@ -56,8 +101,29 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Session Detail'),
+        title: detailAsync.maybeWhen(
+          data: (detail) {
+            if (detail == null) return const Text('Session Detail');
+            final name = detail.session.name;
+            return Text(
+              name != null && name.isNotEmpty
+                  ? name
+                  : _formatSessionDate(detail.session.startTime),
+            );
+          },
+          orElse: () => const Text('Session Detail'),
+        ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: 'Rename',
+            onPressed: detailAsync.maybeWhen(
+              data: (detail) => detail != null
+                  ? () => _renameSession(context, ref, detail.session)
+                  : null,
+              orElse: () => null,
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.ios_share),
             tooltip: 'Export',
@@ -287,6 +353,20 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
         ],
       ),
     );
+  }
+
+  /// Shows a rename dialog and persists the new name.
+  Future<void> _renameSession(
+    BuildContext context,
+    WidgetRef ref,
+    Session session,
+  ) async {
+    final newName = await _showRenameDialog(context, session.name);
+    if (newName == null || !context.mounted) return;
+    final repo = ref.read(sessionRepositoryProvider);
+    await repo.rename(session.id, newName.isEmpty ? null : newName);
+    ref.invalidate(sessionDetailProvider(widget.sessionId));
+    ref.invalidate(sessionsProvider);
   }
 
   /// Shows a confirmation dialog and deletes the session if confirmed.

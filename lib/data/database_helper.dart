@@ -11,7 +11,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 /// opens the database with SQLCipher encryption.
 class DatabaseHelper {
   static const String _dbName = 'apx_tracer.db';
-  static const int _dbVersion = 1;
+  static const int _dbVersion = 4;
   static const String _encryptionKeyStorageKey = 'apx_tracer_db_encryption_key';
 
   static DatabaseHelper? _instance;
@@ -90,6 +90,7 @@ class DatabaseHelper {
     await db.execute('''
       CREATE TABLE sessions (
         id TEXT PRIMARY KEY,
+        name TEXT,
         start_time INTEGER NOT NULL,
         end_time INTEGER,
         duration_ms INTEGER,
@@ -128,6 +129,7 @@ class DatabaseHelper {
         start_lng REAL NOT NULL,
         sector1_fraction REAL NOT NULL,
         sector2_fraction REAL NOT NULL,
+        length_m REAL DEFAULT 0,
         session_count INTEGER DEFAULT 1,
         last_driven INTEGER NOT NULL,
         created_at INTEGER NOT NULL
@@ -147,6 +149,7 @@ class DatabaseHelper {
         sector2_ms INTEGER,
         sector3_ms INTEGER,
         is_best_lap INTEGER DEFAULT 0,
+        is_incomplete INTEGER DEFAULT 0,
         FOREIGN KEY (session_id) REFERENCES sessions(id),
         FOREIGN KEY (track_id) REFERENCES tracks(id)
       )
@@ -181,14 +184,21 @@ class DatabaseHelper {
   /// any prior version to the current version works correctly.
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     // Migration strategy: apply each version's changes sequentially.
-    // Example for future migrations:
-    //
-    // if (oldVersion < 2) {
-    //   await db.execute('ALTER TABLE sessions ADD COLUMN notes TEXT');
-    // }
-    // if (oldVersion < 3) {
-    //   await db.execute('CREATE TABLE weather_data (...)');
-    // }
+    if (oldVersion < 2) {
+      await db.execute(
+        'ALTER TABLE laps ADD COLUMN is_incomplete INTEGER DEFAULT 0',
+      );
+    }
+    if (oldVersion < 3) {
+      await db.execute(
+        'ALTER TABLE tracks ADD COLUMN length_m REAL DEFAULT 0',
+      );
+    }
+    if (oldVersion < 4) {
+      await db.execute(
+        'ALTER TABLE sessions ADD COLUMN name TEXT',
+      );
+    }
   }
 
   /// Closes the database connection.

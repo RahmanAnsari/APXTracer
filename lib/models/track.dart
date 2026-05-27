@@ -10,6 +10,11 @@ class Track {
   final LatLng startFinish;
   final double sector1Fraction; // 0.333
   final double sector2Fraction; // 0.666
+
+  /// Arc length of the refined circuit polyline in metres.
+  /// Zero until [PostSessionPipeline] Stage 5 refines it from the best lap.
+  final double lengthM;
+
   final int sessionCount;
   final int lastDriven; // Unix epoch ms
 
@@ -20,6 +25,7 @@ class Track {
     required this.startFinish,
     this.sector1Fraction = 1 / 3,
     this.sector2Fraction = 2 / 3,
+    this.lengthM = 0.0,
     this.sessionCount = 1,
     required this.lastDriven,
   });
@@ -37,6 +43,7 @@ class Track {
       'start_lng': startFinish.longitude,
       'sector1_fraction': sector1Fraction,
       'sector2_fraction': sector2Fraction,
+      'length_m': lengthM,
       'session_count': sessionCount,
       'last_driven': lastDriven,
       'created_at': lastDriven,
@@ -64,8 +71,29 @@ class Track {
       ),
       sector1Fraction: (map['sector1_fraction'] as num).toDouble(),
       sector2Fraction: (map['sector2_fraction'] as num).toDouble(),
+      lengthM: map['length_m'] != null ? (map['length_m'] as num).toDouble() : 0.0,
       sessionCount: map['session_count'] as int,
       lastDriven: map['last_driven'] as int,
     );
+  }
+
+  /// Returns the circuit polyline as a GeoJSON Feature (LineString).
+  ///
+  /// GeoJSON uses [longitude, latitude] coordinate order per RFC 7946.
+  Map<String, dynamic> toGeoJson() {
+    return {
+      'type': 'Feature',
+      'geometry': {
+        'type': 'LineString',
+        'coordinates': polyline.map((p) => [p.longitude, p.latitude]).toList(),
+      },
+      'properties': {
+        'id': id,
+        'name': name,
+        'length_m': lengthM,
+        'sector1_fraction': sector1Fraction,
+        'sector2_fraction': sector2Fraction,
+      },
+    };
   }
 }

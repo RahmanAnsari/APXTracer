@@ -1,6 +1,11 @@
 /// Represents a continuous recording period from start to stop.
 class Session {
   final String id;
+
+  /// User-defined session name. Null until the user renames it; the UI should
+  /// fall back to displaying the formatted [startTime] when this is null.
+  final String? name;
+
   final int startTime; // Unix epoch ms
   final int? endTime; // Unix epoch ms
   final int? durationMs;
@@ -8,6 +13,7 @@ class Session {
 
   const Session({
     required this.id,
+    this.name,
     required this.startTime,
     this.endTime,
     this.durationMs,
@@ -18,6 +24,7 @@ class Session {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'name': name,
       'start_time': startTime,
       'end_time': endTime,
       'duration_ms': durationMs,
@@ -30,11 +37,11 @@ class Session {
   factory Session.fromMap(Map<String, dynamic> map) {
     return Session(
       id: map['id'] as String,
+      name: map['name'] as String?,
       startTime: map['start_time'] as int,
-      endTime: map['end_time'] != null ? map['end_time'] as int : null,
-      durationMs:
-          map['duration_ms'] != null ? map['duration_ms'] as int : null,
-      trackId: map['track_id'] != null ? map['track_id'] as String : null,
+      endTime: map['end_time'] as int?,
+      durationMs: map['duration_ms'] as int?,
+      trackId: map['track_id'] as String?,
     );
   }
 }

@@ -598,9 +598,14 @@ void main() {
         async.flushMicrotasks();
 
         final activeGpsCount2 = 1; // fix #7
+        // After async.elapse(201ms), _lastImuEmitAt is still at the fake time
+        // of fix #3. The IMU at t=1500ms arrives 201ms later (> 100ms interval),
+        // so the IMU-driven emit fires once before GPS fix #7.
+        final imuDrivenEmits = 1;
 
-        // Total fused samples should equal GPS fixes during active periods
-        expect(fusedSamples.length, activeGpsCount1 + activeGpsCount2);
+        // Total = GPS fused during active periods + IMU-driven dead-reckoned emits
+        expect(fusedSamples.length,
+            activeGpsCount1 + activeGpsCount2 + imuDrivenEmits);
       });
     });
   });

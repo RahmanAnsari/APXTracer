@@ -134,10 +134,14 @@ final fusionEngineProvider = Provider<FusionEngine>((ref) {
   final imuService = ref.watch(imuServiceProvider);
   final filter = DeadReckoningFilter();
 
-  return FusionEngine(
+  final engine = FusionEngine(
     filter: filter,
     imuService: imuService,
   );
+
+  ref.onDispose(engine.dispose);
+
+  return engine;
 });
 
 /// Provider for the fusion state notifier.

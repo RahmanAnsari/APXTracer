@@ -75,6 +75,14 @@ class FusionEngine {
   double _recoveryRoll = 0.0;
   double _recoveryPitch = 0.0;
 
+  // IMU-driven continuous emit — produces dead-reckoned samples at ~10 Hz
+  // regardless of GPS state. Throttled so we don't flood at raw IMU rate.
+  DateTime? _lastImuEmitAt;
+  static const Duration _imuEmitInterval = Duration(milliseconds: 100);
+
+  // Last known GPS accuracy, used to mark dead-reckoned samples as low-accuracy.
+  double _lastGpsAccuracy = 0.0;
+
   // Output streams
   final StreamController<GpsSample> _fusedSampleController =
       StreamController<GpsSample>.broadcast();
@@ -120,7 +128,9 @@ class FusionEngine {
 
   /// Stops the fusion pipeline. Called by RecordingEngine at session stop.
   ///
-  /// Releases all subscriptions, timers, and stream controllers.
+  /// Releases subscriptions and timers, resets state so [start] can be
+  /// called again for a new session. Does NOT close stream controllers —
+  /// those are reused across sessions and only closed by [dispose].
   Future<void> stop() async {
     _gpsTimeoutTimer?.cancel();
     _gpsTimeoutTimer = null;
@@ -135,9 +145,18 @@ class FusionEngine {
 
     _alignmentSamples.clear();
     _lastImuTimestamp = null;
+    _pendingRecovery = false;
+
+    _lastImuEmitAt = null;
+    _lastGpsAccuracy = 0.0;
 
     _setStatus(FusionStatus.uninitialized);
+  }
 
+  /// Permanently releases all resources. Call only when the engine will
+  /// no longer be used (e.g., provider disposal).
+  Future<void> dispose() async {
+    await stop();
     await _fusedSampleController.close();
     await _statusController.close();
   }
@@ -165,6 +184,31 @@ class FusionEngine {
 
       _filter.predictWithImu(data);
       _lastImuTimestamp = data.timestamp;
+
+      // Emit the predicted position at ~10 Hz regardless of GPS state.
+      // This guarantees samples are always produced — GPS present or absent.
+      // When GPS is present, _handleFusedGpsFix also emits a GPS-corrected
+      // sample, giving slightly higher temporal density around each GPS fix.
+      if (_filter.isInitialized) {
+        final now = DateTime.now();
+        if (_lastImuEmitAt == null ||
+            now.difference(_lastImuEmitAt!) >= _imuEmitInterval) {
+          _lastImuEmitAt = now;
+          final sample = navStateToGpsSample(
+            navState: _filter.state,
+            // Dead-reckoned samples get a high accuracy value (> 50 m) so
+            // isLowAccuracy is true, signalling downstream they are IMU-only.
+            gpsAccuracy: _lastGpsAccuracy > 0
+                ? math.max(_lastGpsAccuracy * 2, 100.0)
+                : 100.0,
+            timestampMs: now.millisecondsSinceEpoch,
+          );
+          if (sample != null) {
+            _fusedSampleController.add(sample);
+          }
+        }
+      }
+
       return;
     }
 
@@ -241,16 +285,22 @@ class FusionEngine {
     // Read the current NavState from the filter
     final navState = _filter.state;
 
+    // Cache accuracy for dead-reckoned samples produced from the IMU path.
+    _lastGpsAccuracy = position.accuracy > 0 ? position.accuracy : 100.0;
+
     // Convert NavState to GpsSample
     final sample = navStateToGpsSample(
       navState: navState,
-      gpsAccuracy: position.accuracy,
+      gpsAccuracy: _lastGpsAccuracy,
       timestampMs: position.timestamp.millisecondsSinceEpoch,
     );
 
-    // Emit the fused sample if coordinates are valid (non-null result)
+    // Emit the GPS-corrected sample if coordinates are valid.
     if (sample != null) {
       _fusedSampleController.add(sample);
+      // Advance the IMU emit clock so the next IMU sample is emitted
+      // ~100 ms after this GPS-corrected one, avoiding back-to-back duplicates.
+      _lastImuEmitAt = DateTime.now();
     }
   }
 

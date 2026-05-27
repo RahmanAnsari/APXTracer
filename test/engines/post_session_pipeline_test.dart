@@ -223,6 +223,8 @@ void main() {
     when(() => mockLapDetection.computeSectorTimes(any(), any(), any()))
         .thenAnswer((_) async => st);
     when(() => mockLapRepo.insertBatch(any())).thenAnswer((_) async {});
+    when(() => mockTrackDiscovery.refineCircuit(any(), any()))
+        .thenAnswer((_) async => t);
     when(() => mockAnalytics.computeAnalytics(any(), any(), any(), any()))
         .thenAnswer((_) async => a);
   }
@@ -298,6 +300,11 @@ void main() {
       when(() => mockLapRepo.insertBatch(any())).thenAnswer((_) async {
         callOrder.add('persistLaps');
       });
+      when(() => mockTrackDiscovery.refineCircuit(any(), any()))
+          .thenAnswer((_) async {
+        callOrder.add('circuitRefinement');
+        return track;
+      });
       when(() => mockAnalytics.computeAnalytics(any(), any(), any(), any()))
           .thenAnswer((_) async {
         callOrder.add('analytics');
@@ -312,6 +319,7 @@ void main() {
         'computeSectors',
         'sectorTimes',
         'persistLaps',
+        'circuitRefinement',
         'analytics',
       ]);
     });
@@ -503,6 +511,8 @@ void main() {
           .thenAnswer((_) async => []);
       when(() => mockTrackDiscovery.computeSectors(any())).thenReturn([]);
       when(() => mockLapRepo.insertBatch(any())).thenAnswer((_) async {});
+      when(() => mockTrackDiscovery.refineCircuit(any(), any()))
+          .thenAnswer((_) async => track);
       when(() => mockAnalytics.computeAnalytics(any(), any(), any(), any()))
           .thenAnswer((_) async => analytics);
 

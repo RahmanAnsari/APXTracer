@@ -361,16 +361,19 @@ void main() {
 
       final laps = await engine.detectLaps(samples, track);
 
-      // Should only have 1 complete lap (between the two crossings)
-      expect(laps.length, 1);
+      // 1 complete lap (between the two crossings) + 1 incomplete tail lap
+      expect(laps.length, 2);
       expect(laps[0].lapNumber, 1);
+      expect(laps[0].isIncomplete, isFalse);
+      expect(laps[1].isIncomplete, isTrue);
     });
 
-    test('returns empty when only one crossing detected', () async {
+    test('returns one incomplete lap when only one crossing detected', () async {
       final startFinish = LatLng(51.5, -0.1);
       final track = _track(startFinish);
 
-      // Only one crossing - no complete lap possible
+      // Only one crossing — no complete lap possible, but the tail (10 s)
+      // qualifies as an incomplete "returned to pit" lap.
       final samples = <GpsSample>[
         _sample(startFinish.latitude + 0.02, startFinish.longitude, 0),
         _sample(startFinish.latitude + 0.01, startFinish.longitude, 5000),
@@ -381,7 +384,8 @@ void main() {
 
       final laps = await engine.detectLaps(samples, track);
 
-      expect(laps, isEmpty);
+      expect(laps.length, 1);
+      expect(laps[0].isIncomplete, isTrue);
     });
   });
 

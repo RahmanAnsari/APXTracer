@@ -68,6 +68,19 @@ class SessionRepository {
     return results.map((map) => Session.fromMap(map)).toList();
   }
 
+  /// Updates the user-defined name for a session.
+  ///
+  /// Pass an empty string or null to clear a previously set name.
+  Future<void> rename(String id, String? name) async {
+    final db = await _databaseHelper.database;
+    await db.update(
+      'sessions',
+      {'name': name},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   /// Deletes a session and all associated data (samples, laps, analytics)
   /// atomically within a transaction.
   Future<void> delete(String id) async {

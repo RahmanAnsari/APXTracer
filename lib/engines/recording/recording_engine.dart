@@ -53,7 +53,9 @@ class RecordingEngine implements IRecordingEngine {
   final FusionEngine? _fusionEngine;
 
   /// Duration after which GPS signal is considered lost.
-  static const _signalLossThreshold = Duration(seconds: 3);
+  /// At 1 Hz GPS, 5 s gives enough headroom for brief obstructions without
+  /// producing false positives on-track (walls, trees, grandstands).
+  static const _signalLossThreshold = Duration(seconds: 5);
 
   /// Interval for persisting buffered samples to the database.
   static const _batchPersistInterval = Duration(seconds: 1);
@@ -130,42 +132,64 @@ class RecordingEngine implements IRecordingEngine {
     _currentSessionId = sessionId;
     _sessionStartTimeMs = DateTime.now().millisecondsSinceEpoch;
 
-    // Create session record in DB.
-    final session = Session(
-      id: sessionId,
-      startTime: _sessionStartTimeMs!,
-    );
-    await _sessionRepository.insert(session);
+    try {
+      // Create session record in DB.
+      final session = Session(
+        id: sessionId,
+        startTime: _sessionStartTimeMs!,
+      );
+      await _sessionRepository.insert(session);
 
-    // Start FusionEngine if available.
-    if (_fusionEngine != null) {
-      await _fusionEngine.start();
+      // Start FusionEngine if available.
+      if (_fusionEngine != null) {
+        await _fusionEngine.start();
 
-      // Subscribe to fused samples → feed into _sampleBuffer.
-      _fusedSampleSubscription =
-          _fusionEngine.fusedSamples.listen(_onFusedSampleReceived);
+        // Subscribe to fused samples → feed into _sampleBuffer.
+        _fusedSampleSubscription =
+            _fusionEngine.fusedSamples.listen(_onFusedSampleReceived);
 
-      // Subscribe to status updates → handle active/fallback transitions.
-      _fusionStatusSubscription =
-          _fusionEngine.statusUpdates.listen(_onFusionStatusUpdate);
+        // Subscribe to status updates → handle active/fallback transitions.
+        _fusionStatusSubscription =
+            _fusionEngine.statusUpdates.listen(_onFusionStatusUpdate);
+      }
+
+      // Start listening to GPS position stream on the main isolate.
+      // Platform plugins only work on the root isolate.
+      _positionSubscription = _gpsService.getPositionStream().listen(
+        _onPositionReceived,
+        onError: _onPositionError,
+        onDone: _onPositionStreamDone,
+      );
+
+      // Start batch persistence timer.
+      _batchPersistTimer = Timer.periodic(_batchPersistInterval, (_) {
+        _persistBufferedSamples();
+      });
+
+      // Start UI update timer (1 Hz).
+      _uiUpdateTimer = Timer.periodic(_uiUpdateInterval, (_) {
+        _emitUpdate();
+      });
+    } catch (e) {
+      // Reset all state so the next startSession() attempt is clean.
+      _isRecording = false;
+      _currentSessionId = null;
+      _sessionStartTimeMs = null;
+      _currentGpsStatus = GpsStatus.acquiring;
+      _currentSpeedKmh = 0.0;
+      _fusionActive = false;
+      await _positionSubscription?.cancel();
+      _positionSubscription = null;
+      await _fusedSampleSubscription?.cancel();
+      _fusedSampleSubscription = null;
+      await _fusionStatusSubscription?.cancel();
+      _fusionStatusSubscription = null;
+      _batchPersistTimer?.cancel();
+      _batchPersistTimer = null;
+      _uiUpdateTimer?.cancel();
+      _uiUpdateTimer = null;
+      rethrow;
     }
-
-    // Start listening to GPS position stream on the main isolate.
-    // Platform plugins only work on the root isolate.
-    _positionSubscription = _gpsService.getPositionStream().listen(
-      _onPositionReceived,
-      onError: _onPositionError,
-    );
-
-    // Start batch persistence timer.
-    _batchPersistTimer = Timer.periodic(_batchPersistInterval, (_) {
-      _persistBufferedSamples();
-    });
-
-    // Start UI update timer (1 Hz).
-    _uiUpdateTimer = Timer.periodic(_uiUpdateInterval, (_) {
-      _emitUpdate();
-    });
 
     return sessionId;
   }
@@ -273,12 +297,35 @@ class RecordingEngine implements IRecordingEngine {
     _currentGpsStatus = GpsStatus.signalLost;
   }
 
-  /// Handles a fused GpsSample from the FusionEngine.
-  void _onFusedSampleReceived(GpsSample sample) {
-    // Update signal status.
-    _lastSampleReceivedAt = DateTime.now();
-    _currentGpsStatus = GpsStatus.active;
+  /// Called when the Geolocator position stream closes unexpectedly.
+  ///
+  /// The stream should run for the life of the session. If it closes while
+  /// still recording, restart it after a brief delay so GPS resumes without
+  /// requiring the user to stop and restart the session.
+  void _onPositionStreamDone() {
+    if (!_isRecording) return;
+    Future.delayed(const Duration(seconds: 2), _restartPositionStream);
+  }
 
+  /// Cancels the current position subscription and opens a fresh stream.
+  void _restartPositionStream() {
+    if (!_isRecording) return;
+    _positionSubscription?.cancel();
+    _positionSubscription = _gpsService.getPositionStream().listen(
+      _onPositionReceived,
+      onError: _onPositionError,
+      onDone: _onPositionStreamDone,
+    );
+  }
+
+  /// Handles a fused GpsSample from the FusionEngine.
+  ///
+  /// Samples arrive here for both GPS-corrected and IMU-only (dead-reckoned)
+  /// cases. GPS signal tracking (_lastSampleReceivedAt / _currentGpsStatus)
+  /// is intentionally NOT updated here — that only happens in _onPositionReceived
+  /// when real GPS data arrives, so the signal-lost indicator still fires
+  /// correctly even when IMU is continuously producing dead-reckoned samples.
+  void _onFusedSampleReceived(GpsSample sample) {
     // Update current speed from the fused sample.
     if (sample.speed != null) {
       _currentSpeedKmh = sample.speed! * 3.6;

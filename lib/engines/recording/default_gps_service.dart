@@ -46,7 +46,7 @@ class DefaultGpsService implements GpsService {
     try {
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.best,
+          accuracy: LocationAccuracy.bestForNavigation,
         ),
       ).timeout(timeout);
       return position;
@@ -64,7 +64,7 @@ class DefaultGpsService implements GpsService {
     // This allows GPS capture to continue when the screen is locked or
     // the app is in the background during a recording session.
     final locationSettings = AppleSettings(
-      accuracy: LocationAccuracy.best,
+      accuracy: LocationAccuracy.bestForNavigation,
       distanceFilter: 0,
       activityType: ActivityType.automotiveNavigation,
       allowBackgroundLocationUpdates: true,

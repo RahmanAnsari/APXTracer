@@ -7,6 +7,7 @@ import '../../models/gps_sample.dart';
 import '../../models/sector_boundary.dart';
 import '../../models/session.dart';
 import '../../models/track.dart';
+import '../../utils/circuit_builder.dart';
 import '../../utils/haversine.dart';
 import '../../utils/polyline_utils.dart';
 
@@ -22,6 +23,13 @@ abstract class ITrackDiscoveryEngine {
   /// Splits a track into 3 sectors at 1/3 and 2/3 polyline distance.
   /// Returns sector boundary points as polyline distance fractions.
   List<SectorBoundary> computeSectors(Track track);
+
+  /// Refines the track's circuit polyline using the best lap's GPS samples.
+  ///
+  /// Applies Chaikin smoothing + Douglas-Peucker simplification to produce a
+  /// professional-quality circuit centerline. Also computes and stores the
+  /// arc length. Persists the updated track to the database.
+  Future<Track> refineCircuit(Track track, List<GpsSample> bestLapSamples);
 }
 
 /// Minimum number of GPS samples required for closed-loop detection.
@@ -166,5 +174,35 @@ class TrackDiscoveryEngine implements ITrackDiscoveryEngine {
         point: sector2Point,
       ),
     ];
+  }
+
+  @override
+  Future<Track> refineCircuit(
+    Track track,
+    List<GpsSample> bestLapSamples,
+  ) async {
+    // Need enough points for meaningful smoothing
+    if (bestLapSamples.length < 3) return track;
+
+    final rawPoints =
+        bestLapSamples.map((s) => LatLng(s.latitude, s.longitude)).toList();
+
+    final refined = CircuitBuilder.buildReferencePolyline(rawPoints);
+    final lengthM = CircuitBuilder.computeArcLengthMeters(refined);
+
+    final refinedTrack = Track(
+      id: track.id,
+      name: track.name,
+      polyline: refined,
+      startFinish: track.startFinish,
+      sector1Fraction: track.sector1Fraction,
+      sector2Fraction: track.sector2Fraction,
+      lengthM: lengthM,
+      sessionCount: track.sessionCount,
+      lastDriven: track.lastDriven,
+    );
+
+    await _trackRepository.update(refinedTrack);
+    return refinedTrack;
   }
 }
