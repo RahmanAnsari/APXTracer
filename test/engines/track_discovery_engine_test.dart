@@ -210,10 +210,16 @@ void main() {
         () async {
       final samples = openPathSamples(count: 25);
 
+      // findNearby is now called first (before the closed-loop check) so that
+      // partial sessions on known tracks can still be linked. For an open path
+      // with no nearby track the result must still be null.
+      when(() => mockTrackRepo.findNearby(any(), any()))
+          .thenAnswer((_) async => []);
+
       final result = await engine.discoverTrack(testSession, samples);
 
       expect(result, isNull);
-      verifyNever(() => mockTrackRepo.findNearby(any(), any()));
+      verify(() => mockTrackRepo.findNearby(any(), any())).called(1);
       verifyNever(() => mockTrackRepo.insert(any()));
       verifyNever(() => mockSessionRepo.update(any()));
     });

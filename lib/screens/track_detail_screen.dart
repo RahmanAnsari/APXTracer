@@ -8,6 +8,7 @@ import '../models/session_analytics.dart';
 import '../providers/analytics_provider.dart';
 import '../providers/track_provider.dart';
 import '../utils/time_formatter.dart';
+import '../widgets/track_painter.dart';
 
 /// Screen displaying track detail with associated sessions.
 ///
@@ -127,6 +128,46 @@ class _TrackDetailContent extends StatelessWidget {
             ),
           ),
         ),
+        const SizedBox(height: 16),
+
+        // Circuit map
+        if (track.polyline.length >= 2)
+          Card(
+            color: const Color(0xFF2D2D2D),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'CIRCUIT',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: Colors.grey[400],
+                      letterSpacing: 1.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 220,
+                    width: double.infinity,
+                    child: CustomPaint(
+                      painter: TrackLinePainter(
+                        points: track.polyline,
+                        sector1Fraction: track.sector1Fraction,
+                        sector2Fraction: track.sector2Fraction,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
         const SizedBox(height: 24),
 
         // Sessions section header

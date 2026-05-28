@@ -66,36 +66,21 @@ class TrackDiscoveryEngine implements ITrackDiscoveryEngine {
     }
 
     final firstSample = samples.first;
-    final lastSample = samples.last;
-
-    // Calculate Haversine distance between first and last GPS sample
-    final distance = haversineDistance(
-      firstSample.latitude,
-      firstSample.longitude,
-      lastSample.latitude,
-      lastSample.longitude,
-    );
-
-    // Check if the path forms a closed loop
-    if (distance > _closedLoopThresholdMeters) {
-      return null; // No closed loop detected
-    }
-
-    // Generate track polyline from GPS path
-    final polyline =
-        samples.map((s) => LatLng(s.latitude, s.longitude)).toList();
-
-    // Use the first sample as the start/finish point
     final startFinish = LatLng(firstSample.latitude, firstSample.longitude);
 
-    // Query existing tracks for a match within 50m of start/finish
+    // ── Step 1: Match against known tracks regardless of loop closure ──────
+    //
+    // A known track is matched purely by the session's starting position
+    // (within 50 m of an existing track's start/finish point).  This means
+    // partial sessions — e.g. the driver completed one clean lap then stopped
+    // mid-circuit on the second — are still linked to the correct track so
+    // that the completed laps and the incomplete lap tail are recorded.
     final nearbyTracks = await _trackRepository.findNearby(
       startFinish.latitude,
       startFinish.longitude,
     );
 
     if (nearbyTracks.isNotEmpty) {
-      // Match found - associate session with existing track
       final existingTrack = nearbyTracks.first;
       final updatedTrack = Track(
         id: existingTrack.id,
@@ -109,20 +94,39 @@ class TrackDiscoveryEngine implements ITrackDiscoveryEngine {
       );
       await _trackRepository.update(updatedTrack);
 
-      // Update session with track ID
-      final updatedSession = Session(
+      await _sessionRepository.update(Session(
         id: session.id,
         startTime: session.startTime,
         endTime: session.endTime,
         durationMs: session.durationMs,
         trackId: updatedTrack.id,
-      );
-      await _sessionRepository.update(updatedSession);
+      ));
 
       return updatedTrack;
     }
 
-    // No match found - create a new track
+    // ── Step 2: Only create a NEW track if the path forms a closed loop ────
+    //
+    // Creating a new track from a partial session is meaningless — you need
+    // at least one complete lap to define the circuit geometry.  If the last
+    // sample is more than 50 m from the first the session ended mid-circuit
+    // and we cannot infer the track shape.
+    final lastSample = samples.last;
+    final distance = haversineDistance(
+      firstSample.latitude,
+      firstSample.longitude,
+      lastSample.latitude,
+      lastSample.longitude,
+    );
+
+    if (distance > _closedLoopThresholdMeters) {
+      return null;
+    }
+
+    // Closed loop on an unknown track — create a new track record.
+    final polyline =
+        samples.map((s) => LatLng(s.latitude, s.longitude)).toList();
+
     final newTrack = Track(
       id: _uuid.v4(),
       polyline: polyline,
@@ -134,15 +138,13 @@ class TrackDiscoveryEngine implements ITrackDiscoveryEngine {
     );
     await _trackRepository.insert(newTrack);
 
-    // Update session with track ID
-    final updatedSession = Session(
+    await _sessionRepository.update(Session(
       id: session.id,
       startTime: session.startTime,
       endTime: session.endTime,
       durationMs: session.durationMs,
       trackId: newTrack.id,
-    );
-    await _sessionRepository.update(updatedSession);
+    ));
 
     return newTrack;
   }
