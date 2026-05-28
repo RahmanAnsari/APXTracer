@@ -1,7 +1,9 @@
 import '../data/gps_sample_repository.dart';
 import '../data/lap_repository.dart';
 import '../data/session_repository.dart';
+import '../data/track_repository.dart';
 import '../models/gps_sample.dart';
+import '../models/session.dart';
 import '../models/lap.dart';
 import '../models/session_analytics.dart';
 import '../models/track.dart';
@@ -46,6 +48,7 @@ class PostSessionPipeline {
   final SessionRepository _sessionRepository;
   final GpsSampleRepository _gpsSampleRepository;
   final LapRepository _lapRepository;
+  final TrackRepository _trackRepository;
   final ITrackDiscoveryEngine _trackDiscoveryEngine;
   final ILapDetectionEngine _lapDetectionEngine;
   final IAnalyticsEngine _analyticsEngine;
@@ -54,12 +57,14 @@ class PostSessionPipeline {
     required SessionRepository sessionRepository,
     required GpsSampleRepository gpsSampleRepository,
     required LapRepository lapRepository,
+    required TrackRepository trackRepository,
     required ITrackDiscoveryEngine trackDiscoveryEngine,
     required ILapDetectionEngine lapDetectionEngine,
     required IAnalyticsEngine analyticsEngine,
   })  : _sessionRepository = sessionRepository,
         _gpsSampleRepository = gpsSampleRepository,
         _lapRepository = lapRepository,
+        _trackRepository = trackRepository,
         _trackDiscoveryEngine = trackDiscoveryEngine,
         _lapDetectionEngine = lapDetectionEngine,
         _analyticsEngine = analyticsEngine;
@@ -82,7 +87,11 @@ class PostSessionPipeline {
 
   /// Executes the full post-session processing pipeline for the given session.
   ///
-  /// Loads the session and GPS samples from the database, then runs:
+  /// When [preSelectedTrackId] is provided the session is immediately linked to
+  /// that existing track — track discovery and circuit refinement are skipped
+  /// and the stored polyline / sector fractions are used as-is.
+  ///
+  /// When null (default / Auto-detect) the full pipeline runs:
   /// 0. Stationary Trim   — strips prefix/suffix while car was stationary
   /// 1. Track Discovery   — detects closed loop, matches or creates track
   /// 2. Lap Detection     — identifies laps if a track was found
@@ -91,7 +100,10 @@ class PostSessionPipeline {
   /// 5. Analytics         — computes all session metrics
   ///
   /// Throws [ArgumentError] if the session ID is not found in the database.
-  Future<PostSessionResult> execute(String sessionId) async {
+  Future<PostSessionResult> execute(
+    String sessionId, {
+    String? preSelectedTrackId,
+  }) async {
     // Load session from database
     final session = await _sessionRepository.getById(sessionId);
     if (session == null) {
@@ -118,27 +130,29 @@ class PostSessionPipeline {
       return PostSessionResult(laps: [], analytics: emptyAnalytics);
     }
 
-    // Stage 1: Track Discovery
-    var track = await _trackDiscoveryEngine.discoverTrack(session, samples);
+    // Stage 1: Track Discovery or pre-selected track assignment.
+    Track? track;
+    if (preSelectedTrackId != null) {
+      track = await _linkPreSelectedTrack(session, preSelectedTrackId);
+    } else {
+      track = await _trackDiscoveryEngine.discoverTrack(session, samples);
+    }
 
-    // Stage 2 & 3: Lap Detection and Sector Times (only if track found)
     List<Lap> laps = [];
     List<LapSectors> sectorTimes = [];
 
     if (track != null) {
-      // Capture in a final local so closures below see a non-nullable type.
-      // (var track is reassigned in Stage 5, which disables Dart's promotion.)
-      final resolvedTrack = track;
+      final discoveredTrack = track;
 
-      // Detect laps using start/finish crossings
-      final detectedLaps = await _lapDetectionEngine.detectLaps(samples, resolvedTrack);
+      // Stage 2: Lap Detection — find lap boundaries from start/finish crossings.
+      final detectedLaps =
+          await _lapDetectionEngine.detectLaps(samples, discoveredTrack);
 
-      // Set the session ID on each detected lap
       laps = detectedLaps
           .map((lap) => Lap(
                 id: lap.id,
                 sessionId: sessionId,
-                trackId: resolvedTrack.id,
+                trackId: discoveredTrack.id,
                 lapNumber: lap.lapNumber,
                 startTimestamp: lap.startTimestamp,
                 endTimestamp: lap.endTimestamp,
@@ -151,59 +165,62 @@ class PostSessionPipeline {
               ))
           .toList();
 
-      // Compute sector boundaries and sector times
-      final sectorBoundaries = _trackDiscoveryEngine.computeSectors(resolvedTrack);
+      // Stage 3: Circuit Refinement.
+      //
+      // Skipped when using a pre-selected track — the existing polyline is
+      // already a refined single-lap reference from prior sessions, so we
+      // preserve it as-is and keep the stored sector fractions accurate.
+      //
+      // For auto-detected tracks this MUST run before sector computation
+      // because the initial polyline spans all session samples (multi-lap).
+      // Refining to a single-lap polyline ensures 1/3 and 2/3 fractions
+      // correctly mark thirds of the actual circuit.
+      //
+      // Sample priority: best lap → longest lap → all samples.
+      final Track refinedTrack;
+      if (preSelectedTrackId != null) {
+        refinedTrack = discoveredTrack;
+      } else {
+        final List<GpsSample> refinementSamples;
+        final bestLap = laps.where((l) => l.isBestLap).firstOrNull;
+        if (bestLap != null) {
+          refinementSamples = samples
+              .where((s) =>
+                  s.timestamp >= bestLap.startTimestamp &&
+                  s.timestamp <= bestLap.endTimestamp)
+              .toList();
+        } else if (laps.isNotEmpty) {
+          final longestLap =
+              laps.reduce((a, b) => a.lapTimeMs >= b.lapTimeMs ? a : b);
+          refinementSamples = samples
+              .where((s) =>
+                  s.timestamp >= longestLap.startTimestamp &&
+                  s.timestamp <= longestLap.endTimestamp)
+              .toList();
+        } else {
+          refinementSamples = samples;
+        }
+        final refined = await _trackDiscoveryEngine.refineCircuit(
+            discoveredTrack, refinementSamples);
+        track = refined;
+        refinedTrack = refined;
+      }
+
+      // Stage 4: Sector Times — compute boundaries on the refined single-lap
+      // polyline so that each sector represents ~1/3 of the actual circuit.
+      final sectorBoundaries =
+          _trackDiscoveryEngine.computeSectors(refinedTrack);
       if (sectorBoundaries.isNotEmpty && laps.isNotEmpty) {
         sectorTimes = await _lapDetectionEngine.computeSectorTimes(
           laps,
           samples,
           sectorBoundaries,
         );
-
-        // Apply sector times to laps
         laps = _applySectorTimesToLaps(laps, sectorTimes);
       }
 
-      // Persist laps atomically
+      // Persist laps with sector times already applied.
       await _lapRepository.insertBatch(laps);
-    }
-
-    // Stage 4: Circuit refinement — build a clean professional polyline from
-    // the best available driving data using Chaikin + Douglas-Peucker.
-    //
-    // Sample priority:
-    //   1. Best complete lap  — cleanest single-loop reference
-    //   2. Longest lap        — driver went far but didn't finish
-    //   3. All session samples — fallback when the line was never crossed
-    //
-    // Stage 1 confirmed a closed loop, so the shape is always correct;
-    // smoothing runs unconditionally to remove GPS jitter.
-    if (track != null) {
-      final List<GpsSample> refinementSamples;
-
-      final bestLap = laps.where((l) => l.isBestLap).firstOrNull;
-      if (bestLap != null) {
-        refinementSamples = samples
-            .where((s) =>
-                s.timestamp >= bestLap.startTimestamp &&
-                s.timestamp <= bestLap.endTimestamp)
-            .toList();
-      } else if (laps.isNotEmpty) {
-        // No complete lap — use whichever lap covered the most time on track.
-        final longestLap = laps.reduce(
-          (a, b) => a.lapTimeMs >= b.lapTimeMs ? a : b,
-        );
-        refinementSamples = samples
-            .where((s) =>
-                s.timestamp >= longestLap.startTimestamp &&
-                s.timestamp <= longestLap.endTimestamp)
-            .toList();
-      } else {
-        // Driver never crossed the start/finish line — smooth all samples.
-        refinementSamples = samples;
-      }
-
-      track = await _trackDiscoveryEngine.refineCircuit(track, refinementSamples);
     }
 
     // Stage 5: Analytics computation
@@ -223,6 +240,41 @@ class PostSessionPipeline {
       laps: laps,
       analytics: analytics,
     );
+  }
+
+  // ─── Pre-selected track linking ───────────────────────────────────────────
+
+  /// Links [session] to a manually chosen track and increments its session
+  /// counter. Returns the track, or null if the ID no longer exists in the DB.
+  Future<Track?> _linkPreSelectedTrack(
+    Session session,
+    String trackId,
+  ) async {
+    final track = await _trackRepository.getById(trackId);
+    if (track == null) return null;
+
+    await _sessionRepository.update(Session(
+      id: session.id,
+      name: session.name,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      durationMs: session.durationMs,
+      trackId: track.id,
+    ));
+
+    await _trackRepository.update(Track(
+      id: track.id,
+      name: track.name,
+      polyline: track.polyline,
+      startFinish: track.startFinish,
+      sector1Fraction: track.sector1Fraction,
+      sector2Fraction: track.sector2Fraction,
+      lengthM: track.lengthM,
+      sessionCount: track.sessionCount + 1,
+      lastDriven: session.startTime,
+    ));
+
+    return track;
   }
 
   // ─── Stage 0: Stationary prefix trim ──────────────────────────────────────

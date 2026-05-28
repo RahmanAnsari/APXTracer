@@ -156,21 +156,22 @@ class TrackDiscoveryEngine implements ITrackDiscoveryEngine {
       return [];
     }
 
-    // Sector boundaries at 1/3 and 2/3 cumulative polyline distance
-    const double sector1Fraction = 1 / 3;
-    const double sector2Fraction = 2 / 3;
+    // Sector boundaries at the fractions stored on the track.
+    // For a new track these default to 1/3 and 2/3; they can be customised
+    // in the future without changing this computation.
+    final s1 = track.sector1Fraction.clamp(0.0, 1.0);
+    final s2 = track.sector2Fraction.clamp(0.0, 1.0);
 
-    // Interpolate geographic points at the sector boundary fractions
-    final sector1Point = pointAtFraction(points, sector1Fraction);
-    final sector2Point = pointAtFraction(points, sector2Fraction);
+    final sector1Point = pointAtFraction(points, s1);
+    final sector2Point = pointAtFraction(points, s2);
 
     return [
       SectorBoundary(
-        polylineFraction: sector1Fraction,
+        polylineFraction: s1,
         point: sector1Point,
       ),
       SectorBoundary(
-        polylineFraction: sector2Fraction,
+        polylineFraction: s2,
         point: sector2Point,
       ),
     ];

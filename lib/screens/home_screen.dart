@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../data/analytics_repository.dart';
+import '../providers/analytics_provider.dart';
 import '../providers/session_provider.dart';
 import '../models/session.dart';
 import '../models/session_analytics.dart';
@@ -41,7 +43,10 @@ class HomeScreen extends ConsumerWidget {
               _StartRecordingButton(
                 onPressed: () => context.push('/recording'),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+              // Lifetime stats strip
+              _LifetimeStatsSection(statsAsync: ref.watch(lifetimeStatsProvider)),
+              const SizedBox(height: 24),
               // Recent session summary
               sessionsAsync.when(
                 data: (sessions) => _RecentSessionSection(
@@ -380,6 +385,130 @@ class _RecentSessionError extends StatelessWidget {
             color: theme.colorScheme.error,
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// A 2×2 grid showing lifetime totals: km, hours, sessions, tracks.
+class _LifetimeStatsSection extends StatelessWidget {
+  final AsyncValue<LifetimeStats> statsAsync;
+
+  const _LifetimeStatsSection({required this.statsAsync});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    final stats = statsAsync.valueOrNull;
+
+    final totalKm = stats != null
+        ? '${stats.totalKm.toStringAsFixed(1)} km'
+        : '--';
+    final totalHours = stats != null
+        ? _formatHours(stats.totalSeconds)
+        : '--';
+    final totalSessions = stats != null ? '${stats.totalSessions}' : '--';
+    final totalTracks = stats != null ? '${stats.totalTracks}' : '--';
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+        child: Row(
+          children: [
+            _StatCell(
+              icon: Icons.straighten_outlined,
+              value: totalKm,
+              label: 'Distance',
+            ),
+            _StatDivider(),
+            _StatCell(
+              icon: Icons.schedule_outlined,
+              value: totalHours,
+              label: 'Time',
+            ),
+            _StatDivider(),
+            _StatCell(
+              icon: Icons.list_alt_outlined,
+              value: totalSessions,
+              label: 'Sessions',
+            ),
+            _StatDivider(),
+            _StatCell(
+              icon: Icons.map_outlined,
+              value: totalTracks,
+              label: 'Tracks',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatHours(double totalSeconds) {
+    final hours = totalSeconds / 3600;
+    if (hours < 1) {
+      final minutes = (totalSeconds / 60).round();
+      return '${minutes}m';
+    }
+    return '${hours.toStringAsFixed(1)}h';
+  }
+}
+
+class _StatCell extends StatelessWidget {
+  final IconData icon;
+  final String value;
+  final String label;
+
+  const _StatCell({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Expanded(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 20, color: theme.colorScheme.primary),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 40,
+      child: VerticalDivider(
+        width: 1,
+        thickness: 1,
+        color: Theme.of(context).colorScheme.outlineVariant,
       ),
     );
   }

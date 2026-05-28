@@ -40,12 +40,19 @@ class RecordingState {
   /// The result from the post-session pipeline (null until processing completes).
   final PostSessionResult? result;
 
+  /// Track ID chosen by the user before starting a session.
+  /// Null means Auto-detect (default pipeline behaviour).
+  /// Persists across sessions so the user does not need to re-select on a
+  /// track day with multiple back-to-back sessions.
+  final String? preSelectedTrackId;
+
   const RecordingState({
     this.status = RecordingStatus.idle,
     this.latestUpdate,
     this.sessionId,
     this.error,
     this.result,
+    this.preSelectedTrackId,
   });
 
   RecordingState copyWith({
@@ -54,10 +61,12 @@ class RecordingState {
     String? sessionId,
     String? error,
     PostSessionResult? result,
+    String? preSelectedTrackId,
     bool clearLatestUpdate = false,
     bool clearSessionId = false,
     bool clearError = false,
     bool clearResult = false,
+    bool clearPreSelectedTrackId = false,
   }) {
     return RecordingState(
       status: status ?? this.status,
@@ -66,6 +75,9 @@ class RecordingState {
       sessionId: clearSessionId ? null : (sessionId ?? this.sessionId),
       error: clearError ? null : (error ?? this.error),
       result: clearResult ? null : (result ?? this.result),
+      preSelectedTrackId: clearPreSelectedTrackId
+          ? null
+          : (preSelectedTrackId ?? this.preSelectedTrackId),
     );
   }
 }
@@ -96,6 +108,20 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
   ///
   /// Emits at least 1 Hz while recording (requirement 1.7).
   Stream<RecordingUpdate> get liveUpdates => _recordingEngine.updates;
+
+  /// Sets or clears the track that will be used for the next session.
+  ///
+  /// Pass a track ID to pin the session to a specific known track (skipping
+  /// auto-detection and circuit refinement). Pass null to restore Auto-detect.
+  /// No-op if a session is already in progress.
+  void setPreSelectedTrack(String? trackId) {
+    if (state.status != RecordingStatus.idle) return;
+    if (trackId == null) {
+      state = state.copyWith(clearPreSelectedTrackId: true);
+    } else {
+      state = state.copyWith(preSelectedTrackId: trackId);
+    }
+  }
 
   /// Starts a new recording session.
   ///
@@ -175,7 +201,10 @@ class RecordingNotifier extends StateNotifier<RecordingState> {
       final session = await _recordingEngine.stopSession();
 
       // Run the post-session pipeline (track discovery → lap detection → analytics).
-      final result = await _postSessionPipeline.execute(session.id);
+      final result = await _postSessionPipeline.execute(
+        session.id,
+        preSelectedTrackId: state.preSelectedTrackId,
+      );
 
       // Transition back to idle with the result.
       state = state.copyWith(

@@ -1,10 +1,12 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:latlong2/latlong.dart' as geo;
 
-import '../models/gps_sample.dart';
 import '../models/session_analytics.dart';
+import '../models/track.dart';
 import '../providers/analytics_provider.dart';
+import '../providers/track_provider.dart';
 import '../utils/time_formatter.dart';
 
 /// Session Summary screen displaying post-session analytics, racing line map,
@@ -20,7 +22,7 @@ class SessionSummaryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final analyticsAsync = ref.watch(sessionAnalyticsProvider(sessionId));
     final speedTraceAsync = ref.watch(speedTraceProvider(sessionId));
-    final gpsSamplesAsync = ref.watch(_gpsSamplesProvider(sessionId));
+    final trackAsync = ref.watch(sessionTrackProvider(sessionId));
 
     return Scaffold(
       appBar: AppBar(
@@ -45,7 +47,7 @@ class SessionSummaryScreen extends ConsumerWidget {
               children: [
                 _buildMetricsCard(context, analytics),
                 const SizedBox(height: 16),
-                _buildMapSection(context, gpsSamplesAsync),
+                _buildMapSection(context, trackAsync),
                 const SizedBox(height: 16),
                 _buildSpeedGraphSection(context, speedTraceAsync),
               ],
@@ -105,10 +107,10 @@ class SessionSummaryScreen extends ConsumerWidget {
     );
   }
 
-  /// Builds the map section showing the GPS racing line as a polyline.
+  /// Builds the map section showing the refined circuit polyline.
   Widget _buildMapSection(
     BuildContext context,
-    AsyncValue<List<GpsSample>> gpsSamplesAsync,
+    AsyncValue<Track?> trackAsync,
   ) {
     return Card(
       color: const Color(0xFF2D2D2D),
@@ -128,33 +130,34 @@ class SessionSummaryScreen extends ConsumerWidget {
             const SizedBox(height: 12),
             SizedBox(
               height: 250,
-              child: gpsSamplesAsync.when(
+              child: trackAsync.when(
                 loading: () =>
                     const Center(child: CircularProgressIndicator()),
                 error: (error, stack) =>
-                    Center(child: Text('Error loading map: $error')),
-                data: (samples) {
-                  if (samples.isEmpty) {
+                    Center(child: Text('Error loading circuit: $error')),
+                data: (track) {
+                  if (track == null || track.polyline.length < 2) {
                     return const Center(
-                      child: Text('No GPS data available.',
-                          style: TextStyle(color: Colors.grey)),
+                      child: Text(
+                        'No circuit data available.',
+                        style: TextStyle(color: Colors.grey),
+                      ),
                     );
                   }
-                  return _buildTrackLine(samples);
+                  return CustomPaint(
+                    size: const Size(double.infinity, 250),
+                    painter: _TrackLinePainter(
+                      points: track.polyline,
+                      sector1Fraction: track.sector1Fraction,
+                      sector2Fraction: track.sector2Fraction,
+                    ),
+                  );
                 },
               ),
             ),
           ],
         ),
       ),
-    );
-  }
-
-  /// Builds a custom painted track line with sector colors on a dark background.
-  Widget _buildTrackLine(List<GpsSample> samples) {
-    return CustomPaint(
-      size: const Size(double.infinity, 250),
-      painter: _TrackLinePainter(samples: samples),
     );
   }
 
@@ -281,12 +284,6 @@ class SessionSummaryScreen extends ConsumerWidget {
   }
 }
 
-/// A provider that fetches GPS samples for the session map display.
-final _gpsSamplesProvider =
-    FutureProvider.family<List<GpsSample>, String>((ref, sessionId) async {
-  final gpsSampleRepo = ref.watch(gpsSampleRepositoryProvider);
-  return gpsSampleRepo.getBySessionId(sessionId);
-});
 
 /// A simple row widget for displaying a metric label and value.
 class _MetricRow extends StatelessWidget {
@@ -320,94 +317,100 @@ class _MetricRow extends StatelessWidget {
   }
 }
 
-/// Custom painter that draws the track line with 3 sector colors
+/// Custom painter that draws the refined circuit polyline with 3 sector colors
 /// on a dark background, similar to F1-style circuit diagrams.
 ///
 /// Sector 1: Red, Sector 2: Cyan, Sector 3: Orange/Yellow
+/// Sector boundaries are placed at arc-length fractions (sector1Fraction, sector2Fraction).
 class _TrackLinePainter extends CustomPainter {
-  final List<GpsSample> samples;
+  final List<geo.LatLng> points;
+  final double sector1Fraction;
+  final double sector2Fraction;
 
-  /// Sector colors matching F1-style: Red, Cyan, Orange
   static const _sectorColors = [
     Color(0xFFE53935), // Sector 1 - Red
     Color(0xFF00E5FF), // Sector 2 - Cyan
     Color(0xFFFFAB00), // Sector 3 - Orange/Yellow
   ];
 
-  _TrackLinePainter({required this.samples});
+  _TrackLinePainter({
+    required this.points,
+    required this.sector1Fraction,
+    required this.sector2Fraction,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (samples.length < 2) return;
+    if (points.length < 2) return;
 
-    // Calculate bounds of the GPS data
-    double minLat = samples.first.latitude;
-    double maxLat = samples.first.latitude;
-    double minLng = samples.first.longitude;
-    double maxLng = samples.first.longitude;
+    double minLat = points.first.latitude;
+    double maxLat = points.first.latitude;
+    double minLng = points.first.longitude;
+    double maxLng = points.first.longitude;
 
-    for (final sample in samples) {
-      if (sample.latitude < minLat) minLat = sample.latitude;
-      if (sample.latitude > maxLat) maxLat = sample.latitude;
-      if (sample.longitude < minLng) minLng = sample.longitude;
-      if (sample.longitude > maxLng) maxLng = sample.longitude;
+    for (final p in points) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
     }
 
     final latRange = maxLat - minLat;
     final lngRange = maxLng - minLng;
 
-    // Add padding (10% on each side)
     const padding = 0.1;
     final effectiveWidth = size.width * (1 - 2 * padding);
     final effectiveHeight = size.height * (1 - 2 * padding);
-    final offsetX = size.width * padding;
-    final offsetY = size.height * padding;
 
-    // Scale to fit while maintaining aspect ratio
     double scale;
-    double translateX = offsetX;
-    double translateY = offsetY;
+    double translateX;
+    double translateY;
 
     if (latRange == 0 && lngRange == 0) {
-      // Single point — just center it
       scale = 1.0;
+      translateX = size.width / 2;
+      translateY = size.height / 2;
     } else if (latRange == 0) {
       scale = effectiveWidth / lngRange;
+      translateX = size.width * padding;
       translateY = size.height / 2;
     } else if (lngRange == 0) {
       scale = effectiveHeight / latRange;
       translateX = size.width / 2;
+      translateY = size.height * padding;
     } else {
       final scaleX = effectiveWidth / lngRange;
       final scaleY = effectiveHeight / latRange;
       scale = scaleX < scaleY ? scaleX : scaleY;
-
-      // Center the track
       final actualWidth = lngRange * scale;
       final actualHeight = latRange * scale;
       translateX = (size.width - actualWidth) / 2;
       translateY = (size.height - actualHeight) / 2;
     }
 
-    // Convert GPS coordinates to canvas points
-    // Note: latitude increases upward but canvas Y increases downward
-    final points = samples.map((s) {
-      final x = translateX + (s.longitude - minLng) * scale;
-      final y = translateY + (maxLat - s.latitude) * scale;
+    // Convert LatLng to canvas offsets.
+    // Latitude increases upward; canvas Y increases downward.
+    final canvasPoints = points.map((p) {
+      final x = translateX + (p.longitude - minLng) * scale;
+      final y = translateY + (maxLat - p.latitude) * scale;
       return Offset(x, y);
     }).toList();
 
-    // Split into 3 sectors by point count (1/3 each)
-    final sectorSize = points.length ~/ 3;
+    // Compute cumulative arc lengths to split sectors by fraction.
+    final segLengths = <double>[0.0];
+    for (int i = 1; i < canvasPoints.length; i++) {
+      segLengths.add(segLengths.last + (canvasPoints[i] - canvasPoints[i - 1]).distance);
+    }
+    final totalLength = segLengths.last;
+
+    final s1End = totalLength * sector1Fraction.clamp(0.0, 1.0);
+    final s2End = totalLength * sector2Fraction.clamp(0.0, 1.0);
+    final boundaries = [0.0, s1End, s2End, totalLength];
 
     for (int sector = 0; sector < 3; sector++) {
-      final start = sector * sectorSize;
-      final end = sector == 2 ? points.length : (sector + 1) * sectorSize + 1;
-
-      if (start >= points.length) break;
-
-      final sectorPoints = points.sublist(start, end.clamp(0, points.length));
-      if (sectorPoints.length < 2) continue;
+      final segStart = boundaries[sector];
+      final segEnd = boundaries[sector + 1];
+      if (segEnd <= segStart) continue;
 
       final paint = Paint()
         ..color = _sectorColors[sector]
@@ -417,36 +420,60 @@ class _TrackLinePainter extends CustomPainter {
         ..style = PaintingStyle.stroke;
 
       final path = Path();
-      path.moveTo(sectorPoints.first.dx, sectorPoints.first.dy);
+      bool started = false;
 
-      for (int i = 1; i < sectorPoints.length; i++) {
-        path.lineTo(sectorPoints[i].dx, sectorPoints[i].dy);
+      for (int i = 0; i < canvasPoints.length - 1; i++) {
+        final arcA = segLengths[i];
+        final arcB = segLengths[i + 1];
+
+        if (arcB <= segStart || arcA >= segEnd) continue;
+
+        final a = canvasPoints[i];
+        final b = canvasPoints[i + 1];
+        final segLen = arcB - arcA;
+
+        final tA = segLen == 0
+            ? 0.0
+            : ((segStart - arcA) / segLen).clamp(0.0, 1.0);
+        final tB = segLen == 0
+            ? 1.0
+            : ((segEnd - arcA) / segLen).clamp(0.0, 1.0);
+
+        final pA = arcA < segStart ? Offset.lerp(a, b, tA)! : a;
+        final pB = arcB > segEnd ? Offset.lerp(a, b, tB)! : b;
+
+        if (!started) {
+          path.moveTo(pA.dx, pA.dy);
+          started = true;
+        } else {
+          path.lineTo(pA.dx, pA.dy);
+        }
+        path.lineTo(pB.dx, pB.dy);
       }
 
-      canvas.drawPath(path, paint);
+      if (started) canvas.drawPath(path, paint);
     }
 
-    // Draw start/finish marker
-    if (points.isNotEmpty) {
+    // Start/finish marker
+    if (canvasPoints.isNotEmpty) {
       final markerPaint = Paint()
         ..color = Colors.white
         ..style = PaintingStyle.fill;
-      canvas.drawCircle(points.first, 4, markerPaint);
+      canvas.drawCircle(canvasPoints.first, 4, markerPaint);
 
-      // Draw a small cross at start/finish
       final crossPaint = Paint()
         ..color = Colors.white
         ..strokeWidth = 1.5
         ..strokeCap = StrokeCap.round;
       const crossSize = 6.0;
       canvas.drawLine(
-        Offset(points.first.dx - crossSize, points.first.dy),
-        Offset(points.first.dx + crossSize, points.first.dy),
+        Offset(canvasPoints.first.dx - crossSize, canvasPoints.first.dy),
+        Offset(canvasPoints.first.dx + crossSize, canvasPoints.first.dy),
         crossPaint,
       );
       canvas.drawLine(
-        Offset(points.first.dx, points.first.dy - crossSize),
-        Offset(points.first.dx, points.first.dy + crossSize),
+        Offset(canvasPoints.first.dx, canvasPoints.first.dy - crossSize),
+        Offset(canvasPoints.first.dx, canvasPoints.first.dy + crossSize),
         crossPaint,
       );
     }
@@ -454,6 +481,8 @@ class _TrackLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _TrackLinePainter oldDelegate) {
-    return oldDelegate.samples != samples;
+    return oldDelegate.points != points ||
+        oldDelegate.sector1Fraction != sector1Fraction ||
+        oldDelegate.sector2Fraction != sector2Fraction;
   }
 }

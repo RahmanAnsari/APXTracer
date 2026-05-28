@@ -142,10 +142,12 @@ void main() {
           },
         ];
 
-        when(() => mockDb.query(
-              'tracks',
-              orderBy: 'last_driven DESC',
-            )).thenAnswer((_) async => trackMaps);
+        // rawQuery returns real_session_count alongside track columns.
+        final rawMaps = trackMaps.map((m) {
+          return {...m, 'real_session_count': m['session_count']};
+        }).toList();
+
+        when(() => mockDb.rawQuery(any())).thenAnswer((_) async => rawMaps);
 
         final results = await repository.getAll();
 
@@ -159,10 +161,7 @@ void main() {
       });
 
       test('returns empty list when no tracks exist', () async {
-        when(() => mockDb.query(
-              'tracks',
-              orderBy: 'last_driven DESC',
-            )).thenAnswer((_) async => []);
+        when(() => mockDb.rawQuery(any())).thenAnswer((_) async => []);
 
         final results = await repository.getAll();
 
@@ -170,17 +169,11 @@ void main() {
       });
 
       test('queries with correct orderBy parameter', () async {
-        when(() => mockDb.query(
-              'tracks',
-              orderBy: 'last_driven DESC',
-            )).thenAnswer((_) async => []);
+        when(() => mockDb.rawQuery(any())).thenAnswer((_) async => []);
 
         await repository.getAll();
 
-        verify(() => mockDb.query(
-              'tracks',
-              orderBy: 'last_driven DESC',
-            )).called(1);
+        verify(() => mockDb.rawQuery(any())).called(1);
       });
     });
 
@@ -203,10 +196,11 @@ void main() {
           },
         ];
 
-        when(() => mockDb.query(
-              'tracks',
-              orderBy: 'last_driven DESC',
-            )).thenAnswer((_) async => trackMaps);
+        when(() => mockDb.rawQuery(any())).thenAnswer(
+          (_) async => trackMaps
+              .map((m) => {...m, 'real_session_count': m['session_count']})
+              .toList(),
+        );
 
         final results = await repository.findNearby(52.0786, -1.0169);
 
@@ -232,10 +226,11 @@ void main() {
           },
         ];
 
-        when(() => mockDb.query(
-              'tracks',
-              orderBy: 'last_driven DESC',
-            )).thenAnswer((_) async => trackMaps);
+        when(() => mockDb.rawQuery(any())).thenAnswer(
+          (_) async => trackMaps
+              .map((m) => {...m, 'real_session_count': m['session_count']})
+              .toList(),
+        );
 
         final results = await repository.findNearby(51.5074, -0.1278);
 
@@ -243,10 +238,7 @@ void main() {
       });
 
       test('returns empty list when no tracks exist', () async {
-        when(() => mockDb.query(
-              'tracks',
-              orderBy: 'last_driven DESC',
-            )).thenAnswer((_) async => []);
+        when(() => mockDb.rawQuery(any())).thenAnswer((_) async => []);
 
         final results = await repository.findNearby(52.0786, -1.0169);
 

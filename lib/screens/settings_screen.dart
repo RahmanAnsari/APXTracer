@@ -3,10 +3,15 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../data/database_helper.dart';
 import '../providers/session_provider.dart';
 import '../providers/track_provider.dart';
+
+final _packageInfoProvider = FutureProvider<PackageInfo>(
+  (_) => PackageInfo.fromPlatform(),
+);
 
 /// Settings screen providing app preferences and data management options.
 ///
@@ -18,6 +23,8 @@ class SettingsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final packageInfo = ref.watch(_packageInfoProvider);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Settings'),
@@ -35,10 +42,15 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const Divider(),
           const _SectionHeader(title: 'About'),
-          const ListTile(
-            leading: Icon(Icons.info_outline),
-            title: Text('APXTracer'),
-            subtitle: Text('Version 1.0.0'),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: const Text('APXTracer'),
+            subtitle: Text(
+              packageInfo.whenOrNull(
+                    data: (info) => 'Version ${info.version}',
+                  ) ??
+                  'Version —',
+            ),
           ),
           const ListTile(
             leading: Icon(Icons.storage_outlined),

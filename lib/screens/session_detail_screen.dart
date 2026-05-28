@@ -2,14 +2,17 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:latlong2/latlong.dart' as geo;
 
-import '../models/gps_sample.dart';
 import '../models/lap.dart';
 import '../models/session.dart';
 import '../models/session_analytics.dart';
+import '../models/track.dart';
 import '../providers/analytics_provider.dart';
 import '../providers/export_provider.dart';
+import '../providers/recording_provider.dart';
 import '../providers/session_provider.dart';
+import '../providers/track_provider.dart';
 import '../utils/time_formatter.dart';
 
 String _formatSessionDate(int epochMs) {
@@ -56,12 +59,6 @@ Future<String?> _showRenameDialog(BuildContext context, String? currentName) {
   });
 }
 
-/// Provides GPS samples for a given session ID.
-final gpsSamplesProvider =
-    FutureProvider.family<List<GpsSample>, String>((ref, sessionId) async {
-  final repo = ref.watch(gpsSampleRepositoryProvider);
-  return repo.getBySessionId(sessionId);
-});
 
 /// Session Detail screen displaying track visualization, speed graph,
 /// lap list with sector times, and export options.
@@ -78,10 +75,11 @@ class SessionDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
+  bool _isReassigning = false;
+
   @override
   Widget build(BuildContext context) {
     final detailAsync = ref.watch(sessionDetailProvider(widget.sessionId));
-    final samplesAsync = ref.watch(gpsSamplesProvider(widget.sessionId));
     final speedTraceAsync = ref.watch(speedTraceProvider(widget.sessionId));
 
     // Listen to export state changes for success/error feedback
@@ -125,6 +123,18 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
             ),
           ),
           IconButton(
+            icon: const Icon(Icons.flag_outlined),
+            tooltip: 'Change track',
+            onPressed: _isReassigning
+                ? null
+                : detailAsync.maybeWhen(
+                    data: (detail) => detail != null
+                        ? () => _reassignTrack(context, detail.session)
+                        : null,
+                    orElse: () => null,
+                  ),
+          ),
+          IconButton(
             icon: const Icon(Icons.ios_share),
             tooltip: 'Export',
             onPressed: () => _showFormatSelectionSheet(context),
@@ -136,40 +146,49 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
           ),
         ],
       ),
-      body: detailAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stack) => Center(
-          child: Text('Error loading session: $error'),
-        ),
-        data: (detail) {
-          if (detail == null) {
-            return const Center(child: Text('Session not found'));
-          }
-
-          return samplesAsync.when(
+      body: Stack(
+        children: [
+          detailAsync.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, stack) => Center(
-              child: Text('Error loading GPS data: $error'),
+              child: Text('Error loading session: $error'),
             ),
-            data: (samples) {
+            data: (detail) {
+              if (detail == null) {
+                return const Center(child: Text('Session not found'));
+              }
+
               return speedTraceAsync.when(
-                loading: () =>
-                    const Center(child: CircularProgressIndicator()),
+                loading: () => const Center(child: CircularProgressIndicator()),
                 error: (error, stack) => Center(
                   child: Text('Error loading speed data: $error'),
                 ),
                 data: (speedTrace) {
-                  return _buildContent(
-                    context,
-                    detail,
-                    samples,
-                    speedTrace,
-                  );
+                  return _buildContent(context, detail, speedTrace);
                 },
               );
             },
-          );
-        },
+          ),
+          if (_isReassigning)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black54,
+                child: const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(color: Colors.white),
+                      SizedBox(height: 16),
+                      Text(
+                        'Re-processing session...',
+                        style: TextStyle(color: Colors.white, fontSize: 16),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -177,7 +196,6 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
   Widget _buildContent(
     BuildContext context,
     SessionDetail detail,
-    List<GpsSample> samples,
     List<SpeedTracePoint> speedTrace,
   ) {
     final hasLaps = detail.laps.isNotEmpty;
@@ -191,7 +209,7 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
         if (detail.analytics != null) const SizedBox(height: 16),
 
         // Track visualization (dark background, sector colors)
-        _TrackMapSection(samples: samples),
+        _TrackMapSection(sessionId: widget.sessionId),
         const SizedBox(height: 16),
 
         // Speed graph
@@ -410,22 +428,205 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
       }
     }
   }
+
+  /// Shows the track picker and re-runs the pipeline against the chosen track.
+  Future<void> _reassignTrack(BuildContext context, Session session) async {
+    final selection =
+        await _showReassignTrackPicker(context, session.trackId);
+    if (selection == null || !mounted) return; // dismissed
+
+    // '' means "unlink", non-empty string means new track ID
+    final String? newTrackId = selection.isEmpty ? null : selection;
+    if (newTrackId == session.trackId) return; // no change
+
+    setState(() => _isReassigning = true);
+
+    try {
+      // Correct the old track's session count before relinking
+      if (session.trackId != null) {
+        await _decrementTrackSessionCount(session.trackId!, session.id);
+      }
+
+      // Clear stale lap and analytics data computed against the wrong geometry
+      await ref.read(lapRepositoryProvider).deleteBySessionId(session.id);
+      await ref
+          .read(analyticsRepositoryProvider)
+          .deleteBySessionId(session.id);
+
+      if (newTrackId != null) {
+        // Re-run lap detection + sector times + analytics for the correct track
+        await ref.read(postSessionPipelineProvider).execute(
+              session.id,
+              preSelectedTrackId: newTrackId,
+            );
+      } else {
+        // Unlink: just clear track_id; no laps/analytics without a track
+        await ref.read(sessionRepositoryProvider).update(Session(
+              id: session.id,
+              name: session.name,
+              startTime: session.startTime,
+              endTime: session.endTime,
+              durationMs: session.durationMs,
+              trackId: null,
+            ));
+      }
+
+      // Refresh every provider that depends on this session or either track
+      ref.invalidate(sessionDetailProvider(widget.sessionId));
+      ref.invalidate(sessionTrackProvider(widget.sessionId));
+      ref.invalidate(sessionsProvider);
+      ref.invalidate(trackNotifierProvider);
+      if (session.trackId != null) {
+        ref.invalidate(trackDetailProvider(session.trackId!));
+      }
+      if (newTrackId != null) {
+        ref.invalidate(trackDetailProvider(newTrackId));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to change track: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isReassigning = false);
+    }
+  }
+
+  /// Recalculates [trackId]'s session count after [excludeSessionId] is removed.
+  Future<void> _decrementTrackSessionCount(
+    String trackId,
+    String excludeSessionId,
+  ) async {
+    final trackRepo = ref.read(trackRepositoryProvider);
+    final sessionRepo = ref.read(sessionRepositoryProvider);
+
+    final track = await trackRepo.getById(trackId);
+    if (track == null) return;
+
+    final remaining = (await sessionRepo.getByTrackId(trackId))
+        .where((s) => s.id != excludeSessionId)
+        .toList();
+
+    await trackRepo.update(Track(
+      id: track.id,
+      name: track.name,
+      polyline: track.polyline,
+      startFinish: track.startFinish,
+      sector1Fraction: track.sector1Fraction,
+      sector2Fraction: track.sector2Fraction,
+      lengthM: track.lengthM,
+      sessionCount: remaining.length,
+      lastDriven: remaining.isNotEmpty
+          ? remaining
+              .map((s) => s.startTime)
+              .reduce((a, b) => a > b ? a : b)
+          : track.lastDriven,
+    ));
+  }
+
+  /// Shows a bottom sheet of saved tracks.
+  ///
+  /// Returns:
+  /// - `null`  — dismissed, take no action
+  /// - `''`    — user chose to unlink
+  /// - track ID — user chose to reassign to that track
+  Future<String?> _showReassignTrackPicker(
+    BuildContext context,
+    String? currentTrackId,
+  ) {
+    final tracks = ref.read(trackNotifierProvider).valueOrNull ?? [];
+
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  'Change Track',
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              const Divider(height: 1),
+              // Unlink option
+              ListTile(
+                leading: Icon(Icons.link_off,
+                    color: theme.colorScheme.error),
+                title: Text(
+                  'Unlink track',
+                  style: TextStyle(color: theme.colorScheme.error),
+                ),
+                subtitle: const Text(
+                    'Remove track association and clear lap data'),
+                onTap: () => Navigator.pop(ctx, ''),
+              ),
+              if (tracks.isNotEmpty) ...[
+                const Divider(height: 1),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight:
+                        MediaQuery.of(ctx).size.height * 0.4,
+                  ),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: tracks.length,
+                    itemBuilder: (_, i) {
+                      final track = tracks[i];
+                      final isCurrent = track.id == currentTrackId;
+                      return ListTile(
+                        leading: Icon(
+                          Icons.flag_outlined,
+                          color: isCurrent
+                              ? theme.colorScheme.primary
+                              : null,
+                        ),
+                        title: Text(track.name ?? 'Unnamed Track'),
+                        subtitle: Text(
+                          '${track.sessionCount} '
+                          '${track.sessionCount == 1 ? 'session' : 'sessions'}',
+                        ),
+                        trailing: isCurrent
+                            ? Icon(Icons.check,
+                                color: theme.colorScheme.primary)
+                            : null,
+                        // Disable tapping the already-assigned track
+                        onTap: isCurrent
+                            ? null
+                            : () => Navigator.pop(ctx, track.id),
+                      );
+                    },
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
 
-/// Displays the GPS path as a track line with sector colors on a dark background.
-class _TrackMapSection extends StatelessWidget {
-  const _TrackMapSection({required this.samples});
+/// Displays the refined circuit polyline with sector colors on a dark background.
+class _TrackMapSection extends ConsumerWidget {
+  const _TrackMapSection({required this.sessionId});
 
-  final List<GpsSample> samples;
+  final String sessionId;
 
   @override
-  Widget build(BuildContext context) {
-    if (samples.isEmpty) {
-      return const SizedBox(
-        height: 200,
-        child: Center(child: Text('No GPS data available')),
-      );
-    }
+  Widget build(BuildContext context, WidgetRef ref) {
+    final trackAsync = ref.watch(sessionTrackProvider(sessionId));
 
     return Card(
       color: const Color(0xFF2D2D2D),
@@ -446,8 +647,29 @@ class _TrackMapSection extends StatelessWidget {
             SizedBox(
               height: 250,
               width: double.infinity,
-              child: CustomPaint(
-                painter: _TrackLinePainter(samples: samples),
+              child: trackAsync.when(
+                loading: () =>
+                    const Center(child: CircularProgressIndicator()),
+                error: (e, _) =>
+                    Center(child: Text('Error loading circuit: $e')),
+                data: (track) {
+                  if (track == null || track.polyline.length < 2) {
+                    return const Center(
+                      child: Text(
+                        'No circuit data available.',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    );
+                  }
+                  return CustomPaint(
+                    size: const Size(double.infinity, 250),
+                    painter: _TrackLinePainter(
+                      points: track.polyline,
+                      sector1Fraction: track.sector1Fraction,
+                      sector2Fraction: track.sector2Fraction,
+                    ),
+                  );
+                },
               ),
             ),
           ],
@@ -935,10 +1157,14 @@ class _MetricTile extends StatelessWidget {
   }
 }
 
-/// Custom painter that draws the track line with 3 sector colors
+/// Custom painter that draws the refined circuit polyline with 3 sector colors
 /// on a dark background, similar to F1-style circuit diagrams.
+///
+/// Sector boundaries are placed at arc-length fractions (sector1Fraction, sector2Fraction).
 class _TrackLinePainter extends CustomPainter {
-  final List<GpsSample> samples;
+  final List<geo.LatLng> points;
+  final double sector1Fraction;
+  final double sector2Fraction;
 
   static const _sectorColors = [
     Color(0xFFE53935), // Sector 1 - Red
@@ -946,22 +1172,26 @@ class _TrackLinePainter extends CustomPainter {
     Color(0xFFFFAB00), // Sector 3 - Orange/Yellow
   ];
 
-  _TrackLinePainter({required this.samples});
+  _TrackLinePainter({
+    required this.points,
+    required this.sector1Fraction,
+    required this.sector2Fraction,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (samples.length < 2) return;
+    if (points.length < 2) return;
 
-    double minLat = samples.first.latitude;
-    double maxLat = samples.first.latitude;
-    double minLng = samples.first.longitude;
-    double maxLng = samples.first.longitude;
+    double minLat = points.first.latitude;
+    double maxLat = points.first.latitude;
+    double minLng = points.first.longitude;
+    double maxLng = points.first.longitude;
 
-    for (final sample in samples) {
-      if (sample.latitude < minLat) minLat = sample.latitude;
-      if (sample.latitude > maxLat) maxLat = sample.latitude;
-      if (sample.longitude < minLng) minLng = sample.longitude;
-      if (sample.longitude > maxLng) maxLng = sample.longitude;
+    for (final p in points) {
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+      if (p.longitude < minLng) minLng = p.longitude;
+      if (p.longitude > maxLng) maxLng = p.longitude;
     }
 
     final latRange = maxLat - minLat;
@@ -991,29 +1221,36 @@ class _TrackLinePainter extends CustomPainter {
       final scaleX = effectiveWidth / lngRange;
       final scaleY = effectiveHeight / latRange;
       scale = scaleX < scaleY ? scaleX : scaleY;
-
       final actualWidth = lngRange * scale;
       final actualHeight = latRange * scale;
       translateX = (size.width - actualWidth) / 2;
       translateY = (size.height - actualHeight) / 2;
     }
 
-    final points = samples.map((s) {
-      final x = translateX + (s.longitude - minLng) * scale;
-      final y = translateY + (maxLat - s.latitude) * scale;
+    // Convert LatLng to canvas offsets.
+    // Latitude increases upward; canvas Y increases downward.
+    final canvasPoints = points.map((p) {
+      final x = translateX + (p.longitude - minLng) * scale;
+      final y = translateY + (maxLat - p.latitude) * scale;
       return Offset(x, y);
     }).toList();
 
-    final sectorSize = points.length ~/ 3;
+    // Compute cumulative arc lengths to split sectors by fraction.
+    final segLengths = <double>[0.0];
+    for (int i = 1; i < canvasPoints.length; i++) {
+      segLengths
+          .add(segLengths.last + (canvasPoints[i] - canvasPoints[i - 1]).distance);
+    }
+    final totalLength = segLengths.last;
+
+    final s1End = totalLength * sector1Fraction.clamp(0.0, 1.0);
+    final s2End = totalLength * sector2Fraction.clamp(0.0, 1.0);
+    final boundaries = [0.0, s1End, s2End, totalLength];
 
     for (int sector = 0; sector < 3; sector++) {
-      final start = sector * sectorSize;
-      final end = sector == 2 ? points.length : (sector + 1) * sectorSize + 1;
-
-      if (start >= points.length) break;
-
-      final sectorPoints = points.sublist(start, end.clamp(0, points.length));
-      if (sectorPoints.length < 2) continue;
+      final segStart = boundaries[sector];
+      final segEnd = boundaries[sector + 1];
+      if (segEnd <= segStart) continue;
 
       final paint = Paint()
         ..color = _sectorColors[sector]
@@ -1023,21 +1260,46 @@ class _TrackLinePainter extends CustomPainter {
         ..style = PaintingStyle.stroke;
 
       final path = Path();
-      path.moveTo(sectorPoints.first.dx, sectorPoints.first.dy);
+      bool started = false;
 
-      for (int i = 1; i < sectorPoints.length; i++) {
-        path.lineTo(sectorPoints[i].dx, sectorPoints[i].dy);
+      for (int i = 0; i < canvasPoints.length - 1; i++) {
+        final arcA = segLengths[i];
+        final arcB = segLengths[i + 1];
+
+        if (arcB <= segStart || arcA >= segEnd) continue;
+
+        final a = canvasPoints[i];
+        final b = canvasPoints[i + 1];
+        final segLen = arcB - arcA;
+
+        final tA = segLen == 0
+            ? 0.0
+            : ((segStart - arcA) / segLen).clamp(0.0, 1.0);
+        final tB = segLen == 0
+            ? 1.0
+            : ((segEnd - arcA) / segLen).clamp(0.0, 1.0);
+
+        final pA = arcA < segStart ? Offset.lerp(a, b, tA)! : a;
+        final pB = arcB > segEnd ? Offset.lerp(a, b, tB)! : b;
+
+        if (!started) {
+          path.moveTo(pA.dx, pA.dy);
+          started = true;
+        } else {
+          path.lineTo(pA.dx, pA.dy);
+        }
+        path.lineTo(pB.dx, pB.dy);
       }
 
-      canvas.drawPath(path, paint);
+      if (started) canvas.drawPath(path, paint);
     }
 
     // Start/finish marker
-    if (points.isNotEmpty) {
+    if (canvasPoints.isNotEmpty) {
       final markerPaint = Paint()
         ..color = Colors.white
         ..style = PaintingStyle.fill;
-      canvas.drawCircle(points.first, 4, markerPaint);
+      canvas.drawCircle(canvasPoints.first, 4, markerPaint);
 
       final crossPaint = Paint()
         ..color = Colors.white
@@ -1045,13 +1307,13 @@ class _TrackLinePainter extends CustomPainter {
         ..strokeCap = StrokeCap.round;
       const crossSize = 6.0;
       canvas.drawLine(
-        Offset(points.first.dx - crossSize, points.first.dy),
-        Offset(points.first.dx + crossSize, points.first.dy),
+        Offset(canvasPoints.first.dx - crossSize, canvasPoints.first.dy),
+        Offset(canvasPoints.first.dx + crossSize, canvasPoints.first.dy),
         crossPaint,
       );
       canvas.drawLine(
-        Offset(points.first.dx, points.first.dy - crossSize),
-        Offset(points.first.dx, points.first.dy + crossSize),
+        Offset(canvasPoints.first.dx, canvasPoints.first.dy - crossSize),
+        Offset(canvasPoints.first.dx, canvasPoints.first.dy + crossSize),
         crossPaint,
       );
     }
@@ -1059,6 +1321,8 @@ class _TrackLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _TrackLinePainter oldDelegate) {
-    return oldDelegate.samples != samples;
+    return oldDelegate.points != points ||
+        oldDelegate.sector1Fraction != sector1Fraction ||
+        oldDelegate.sector2Fraction != sector2Fraction;
   }
 }

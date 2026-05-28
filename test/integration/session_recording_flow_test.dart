@@ -11,6 +11,7 @@ import 'package:apx_tracer/data/analytics_repository.dart';
 import 'package:apx_tracer/data/gps_sample_repository.dart';
 import 'package:apx_tracer/data/lap_repository.dart';
 import 'package:apx_tracer/data/session_repository.dart';
+import 'package:apx_tracer/data/track_repository.dart';
 import 'package:apx_tracer/engines/analytics/analytics_engine.dart';
 import 'package:apx_tracer/engines/lap_detection/lap_detection_engine.dart';
 import 'package:apx_tracer/engines/post_session_pipeline.dart';
@@ -56,6 +57,8 @@ class MockRecordingEngine extends Mock implements IRecordingEngine {}
 class MockPostSessionPipeline extends Mock implements PostSessionPipeline {}
 
 class MockAnalyticsRepository extends Mock implements AnalyticsRepository {}
+
+class MockTrackRepository extends Mock implements TrackRepository {}
 
 // --- Fakes ---
 
@@ -249,6 +252,7 @@ void main() {
     late MockSessionRepository mockSessionRepo;
     late MockGpsSampleRepository mockGpsSampleRepo;
     late MockLapRepository mockLapRepo;
+    late MockTrackRepository mockTrackRepo;
     late MockTrackDiscoveryEngine mockTrackDiscovery;
     late MockLapDetectionEngine mockLapDetection;
     late MockAnalyticsEngine mockAnalytics;
@@ -258,6 +262,7 @@ void main() {
       mockSessionRepo = MockSessionRepository();
       mockGpsSampleRepo = MockGpsSampleRepository();
       mockLapRepo = MockLapRepository();
+      mockTrackRepo = MockTrackRepository();
       mockTrackDiscovery = MockTrackDiscoveryEngine();
       mockLapDetection = MockLapDetectionEngine();
       mockAnalytics = MockAnalyticsEngine();
@@ -266,6 +271,7 @@ void main() {
         sessionRepository: mockSessionRepo,
         gpsSampleRepository: mockGpsSampleRepo,
         lapRepository: mockLapRepo,
+        trackRepository: mockTrackRepo,
         trackDiscoveryEngine: mockTrackDiscovery,
         lapDetectionEngine: mockLapDetection,
         analyticsEngine: mockAnalytics,

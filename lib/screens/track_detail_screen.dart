@@ -96,7 +96,7 @@ class _TrackDetailContent extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      '${track.sessionCount} ${track.sessionCount == 1 ? 'session' : 'sessions'}',
+                      '${sessions.length} ${sessions.length == 1 ? 'session' : 'sessions'}',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -208,25 +208,39 @@ class _TrackSessionCard extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Date header
+              // Session name + chevron
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      session.name ?? 'Unnamed Session',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              // Date row
               Row(
                 children: [
                   Icon(
                     Icons.calendar_today_outlined,
-                    size: 16,
-                    color: theme.colorScheme.primary,
+                    size: 14,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   Text(
                     _formatSessionDate(session.startTime),
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
-                  ),
-                  const Spacer(),
-                  Icon(
-                    Icons.chevron_right,
-                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ],
               ),

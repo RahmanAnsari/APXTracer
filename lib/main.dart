@@ -42,6 +42,7 @@ void main() {
     sessionRepository: sessionRepository,
     gpsSampleRepository: gpsSampleRepository,
     lapRepository: lapRepository,
+    trackRepository: trackRepository,
     trackDiscoveryEngine: trackDiscoveryEngine,
     lapDetectionEngine: lapDetectionEngine,
     analyticsEngine: analyticsEngine,

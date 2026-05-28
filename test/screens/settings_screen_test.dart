@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import 'package:apx_tracer/data/database_helper.dart';
 import 'package:apx_tracer/screens/settings_screen.dart';
@@ -34,6 +35,14 @@ void main() {
 
     testWidgets('displays About section with app version info',
         (tester) async {
+      PackageInfo.setMockInitialValues(
+        appName: 'APXTracer',
+        packageName: 'com.example.apx_tracer',
+        version: '1.0.0',
+        buildNumber: '1',
+        buildSignature: '',
+      );
+
       await tester.pumpWidget(
         const ProviderScope(
           child: MaterialApp(
@@ -41,6 +50,7 @@ void main() {
           ),
         ),
       );
+      await tester.pump(); // let FutureProvider resolve
 
       expect(find.text('About'), findsOneWidget);
       expect(find.text('APXTracer'), findsOneWidget);

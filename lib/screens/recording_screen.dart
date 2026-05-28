@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../engines/recording/recording_messages.dart';
+import '../models/track.dart';
 import '../providers/recording_provider.dart';
 import '../providers/session_provider.dart';
+import '../providers/track_provider.dart';
 
 /// Recording screen with live telemetry display.
 ///
@@ -71,6 +73,16 @@ class _RecordingScreenState extends ConsumerState<RecordingScreen> {
               ),
 
               const SizedBox(height: 32),
+
+              // Track selector (visible only when idle)
+              if (recordingState.status == RecordingStatus.idle) ...[
+                _TrackSelector(
+                  preSelectedTrackId: recordingState.preSelectedTrackId,
+                  onChanged: (id) =>
+                      ref.read(recordingProvider.notifier).setPreSelectedTrack(id),
+                ),
+                const SizedBox(height: 16),
+              ],
 
               // Start/Stop button
               _RecordingButton(
@@ -417,6 +429,158 @@ class _ProcessingIndicator extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Lets the user pin a specific track before starting a session, or keep
+/// "Auto-detect" (the default).  Tapping opens a bottom-sheet list of all
+/// saved tracks.
+class _TrackSelector extends ConsumerWidget {
+  const _TrackSelector({
+    required this.preSelectedTrackId,
+    required this.onChanged,
+  });
+
+  final String? preSelectedTrackId;
+  final void Function(String? trackId) onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final tracksAsync = ref.watch(trackNotifierProvider);
+    final tracks = tracksAsync.valueOrNull ?? [];
+
+    final Track? selected = preSelectedTrackId == null
+        ? null
+        : tracks.where((t) => t.id == preSelectedTrackId).firstOrNull;
+
+    final bool isAutoDetect = preSelectedTrackId == null;
+    final String label = isAutoDetect
+        ? 'Auto-detect'
+        : (selected?.name ?? 'Unknown Track');
+
+    return InkWell(
+      onTap: () => _openPicker(context, tracks),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isAutoDetect ? Icons.gps_fixed : Icons.flag_outlined,
+              size: 20,
+              color: isAutoDetect
+                  ? theme.colorScheme.onSurfaceVariant
+                  : theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Track',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  Text(
+                    label,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w500,
+                      color: isAutoDetect
+                          ? theme.colorScheme.onSurfaceVariant
+                          : theme.colorScheme.onSurface,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.expand_more,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openPicker(BuildContext context, List<Track> tracks) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Text(
+                  'Select Track',
+                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ),
+              const Divider(height: 1),
+              // Auto-detect option
+              ListTile(
+                leading: const Icon(Icons.gps_fixed),
+                title: const Text('Auto-detect'),
+                subtitle: const Text('Detect and create track automatically'),
+                selected: preSelectedTrackId == null,
+                selectedColor: Theme.of(ctx).colorScheme.primary,
+                onTap: () {
+                  onChanged(null);
+                  Navigator.pop(ctx);
+                },
+              ),
+              if (tracks.isNotEmpty) ...[
+                const Divider(height: 1),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.of(ctx).size.height * 0.4,
+                  ),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: tracks.length,
+                    itemBuilder: (_, i) {
+                      final track = tracks[i];
+                      return ListTile(
+                        leading: const Icon(Icons.flag_outlined),
+                        title: Text(track.name ?? 'Unnamed Track'),
+                        subtitle: Text(
+                          '${track.sessionCount} ${track.sessionCount == 1 ? 'session' : 'sessions'}',
+                        ),
+                        selected: track.id == preSelectedTrackId,
+                        selectedColor: Theme.of(ctx).colorScheme.primary,
+                        onTap: () {
+                          onChanged(track.id);
+                          Navigator.pop(ctx);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
     );
   }
 }

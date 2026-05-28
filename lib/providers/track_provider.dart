@@ -35,6 +35,21 @@ class TrackDetail {
   });
 }
 
+/// Provides the [Track] associated with a session, or null if no track is linked.
+///
+/// Used by circuit painters so they draw the refined polyline (Chaikin-smoothed,
+/// single clean loop) rather than raw multi-lap GPS samples.
+final sessionTrackProvider =
+    FutureProvider.family<Track?, String>((ref, sessionId) async {
+  final sessionRepo = ref.watch(sessionRepositoryProvider);
+  final trackRepo = ref.watch(trackRepositoryProvider);
+
+  final session = await sessionRepo.getById(sessionId);
+  if (session?.trackId == null) return null;
+
+  return trackRepo.getById(session!.trackId!);
+});
+
 /// Provides full track detail including associated sessions for a given track ID.
 ///
 /// Validates: Requirement 7.4 - Display session count and last driven date for each track.
@@ -168,6 +183,21 @@ class TrackNotifier extends StateNotifier<AsyncValue<List<Track>>> {
         success: false,
         error: 'Failed to rename track: $e',
       );
+    }
+  }
+
+  /// Deletes a track and unlinks any associated sessions.
+  ///
+  /// Sessions are not deleted — their track_id is set to null so they remain
+  /// in session history without a track association.
+  Future<bool> deleteTrack(String trackId) async {
+    try {
+      await _sessionRepository.unlinkFromTrack(trackId);
+      await _trackRepository.delete(trackId);
+      await _loadTracks();
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 

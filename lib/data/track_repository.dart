@@ -44,13 +44,24 @@ class TrackRepository {
   }
 
   /// Retrieves all tracks ordered by last_driven descending (most recent first).
+  ///
+  /// The returned [Track.sessionCount] is derived from the actual number of
+  /// sessions linked to each track in the DB, not the stored counter — so it
+  /// stays accurate even when sessions are deleted or reassigned.
   Future<List<Track>> getAll() async {
     final db = await _databaseHelper.database;
-    final results = await db.query(
-      'tracks',
-      orderBy: 'last_driven DESC',
-    );
-    return results.map((map) => Track.fromMap(map)).toList();
+    final results = await db.rawQuery('''
+      SELECT t.*, COUNT(s.id) AS real_session_count
+      FROM tracks t
+      LEFT JOIN sessions s ON s.track_id = t.id
+      GROUP BY t.id
+      ORDER BY t.last_driven DESC
+    ''');
+    return results.map((row) {
+      final corrected = Map<String, dynamic>.from(row);
+      corrected['session_count'] = (row['real_session_count'] as int?) ?? 0;
+      return Track.fromMap(corrected);
+    }).toList();
   }
 
   /// Finds tracks whose start/finish point is within 50 meters of the

@@ -43,8 +43,8 @@ class AnalyticsEngine implements IAnalyticsEngine {
     // Distance: sum of Haversine distances between consecutive samples, in km
     final distanceKm = _computeDistance(samples);
 
-    // Total laps: count of detected laps
-    final totalLaps = laps.length;
+    // Total laps: count of complete laps only (incomplete final lap excluded)
+    final totalLaps = laps.where((l) => !l.isIncomplete).length;
 
     // Best lap time: minimum lap_time_ms (null if no laps)
     final bestLapTimeMs = _computeBestLapTime(laps);
@@ -113,28 +113,30 @@ class AnalyticsEngine implements IAnalyticsEngine {
     return double.parse(distanceKm.toStringAsFixed(2));
   }
 
-  /// Returns the minimum lap_time_ms, or null if no laps.
+  /// Returns the minimum lap_time_ms among complete laps only, or null if none.
   int? _computeBestLapTime(List<Lap> laps) {
-    if (laps.isEmpty) return null;
+    final complete = laps.where((l) => !l.isIncomplete).toList();
+    if (complete.isEmpty) return null;
 
-    int best = laps[0].lapTimeMs;
-    for (int i = 1; i < laps.length; i++) {
-      if (laps[i].lapTimeMs < best) {
-        best = laps[i].lapTimeMs;
+    int best = complete[0].lapTimeMs;
+    for (int i = 1; i < complete.length; i++) {
+      if (complete[i].lapTimeMs < best) {
+        best = complete[i].lapTimeMs;
       }
     }
     return best;
   }
 
-  /// Returns the mean of all lap_time_ms, or null if no laps.
+  /// Returns the mean lap_time_ms of complete laps only, or null if none.
   int? _computeAverageLapTime(List<Lap> laps) {
-    if (laps.isEmpty) return null;
+    final complete = laps.where((l) => !l.isIncomplete).toList();
+    if (complete.isEmpty) return null;
 
     int total = 0;
-    for (final lap in laps) {
+    for (final lap in complete) {
       total += lap.lapTimeMs;
     }
-    return (total / laps.length).round();
+    return (total / complete.length).round();
   }
 
   /// Computes average speed in km/h (1 decimal place).

@@ -129,6 +129,7 @@ class _TrackCardState extends ConsumerState<_TrackCard> {
     final result = await notifier.renameTrack(widget.track.id, newName);
 
     if (result.success) {
+      ref.invalidate(trackDetailProvider(widget.track.id));
       setState(() {
         _isEditing = false;
         _validationError = null;
@@ -137,6 +138,46 @@ class _TrackCardState extends ConsumerState<_TrackCard> {
       setState(() {
         _validationError = result.error;
       });
+    }
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Track'),
+        content: Text(
+          'Delete "${widget.track.name ?? 'Unnamed Track'}"?\n\n'
+          'Associated sessions will not be deleted, but will no longer be linked to this track.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    if (!mounted) return;
+
+    final success = await ref
+        .read(trackNotifierProvider.notifier)
+        .deleteTrack(widget.track.id);
+
+    if (!context.mounted) return;
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to delete track.')),
+      );
     }
   }
 
@@ -221,6 +262,15 @@ class _TrackCardState extends ConsumerState<_TrackCard> {
                       ),
                       tooltip: 'Rename track',
                       onPressed: _startEditing,
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        Icons.delete_outline,
+                        size: 16,
+                        color: theme.colorScheme.error,
+                      ),
+                      tooltip: 'Delete track',
+                      onPressed: () => _confirmDelete(context),
                     ),
                     Icon(
                       Icons.chevron_right,

@@ -1,10 +1,22 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/analytics_repository.dart';
 import '../data/gps_sample_repository.dart';
 import '../data/database_helper.dart';
 import '../models/gps_sample.dart';
 import '../models/session_analytics.dart';
 import 'session_provider.dart';
+
+/// Provides aggregated lifetime statistics across all sessions.
+///
+/// Re-fetches whenever [sessionsProvider] changes (new session recorded
+/// or deleted) so the home screen stats stay in sync.
+final lifetimeStatsProvider = FutureProvider<LifetimeStats>((ref) async {
+  // Depend on sessions so we refresh when a session is added/removed.
+  ref.watch(sessionsProvider);
+  final analyticsRepo = ref.watch(analyticsRepositoryProvider);
+  return analyticsRepo.getLifetimeStats();
+});
 
 /// Provides the [GpsSampleRepository] instance.
 final gpsSampleRepositoryProvider = Provider<GpsSampleRepository>((ref) {

@@ -81,6 +81,17 @@ class SessionRepository {
     );
   }
 
+  /// Removes the track association from all sessions linked to the given track ID.
+  Future<void> unlinkFromTrack(String trackId) async {
+    final db = await _databaseHelper.database;
+    await db.update(
+      'sessions',
+      {'track_id': null},
+      where: 'track_id = ?',
+      whereArgs: [trackId],
+    );
+  }
+
   /// Deletes a session and all associated data (samples, laps, analytics)
   /// atomically within a transaction.
   Future<void> delete(String id) async {

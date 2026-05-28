@@ -5,6 +5,7 @@ import 'package:mocktail/mocktail.dart';
 import 'package:apx_tracer/data/gps_sample_repository.dart';
 import 'package:apx_tracer/data/lap_repository.dart';
 import 'package:apx_tracer/data/session_repository.dart';
+import 'package:apx_tracer/data/track_repository.dart';
 import 'package:apx_tracer/engines/analytics/analytics_engine.dart';
 import 'package:apx_tracer/engines/lap_detection/lap_detection_engine.dart';
 import 'package:apx_tracer/engines/post_session_pipeline.dart';
@@ -23,6 +24,8 @@ class MockGpsSampleRepository extends Mock implements GpsSampleRepository {}
 
 class MockLapRepository extends Mock implements LapRepository {}
 
+class MockTrackRepository extends Mock implements TrackRepository {}
+
 class MockTrackDiscoveryEngine extends Mock implements ITrackDiscoveryEngine {}
 
 class MockLapDetectionEngine extends Mock implements ILapDetectionEngine {}
@@ -40,6 +43,7 @@ void main() {
   late MockSessionRepository mockSessionRepo;
   late MockGpsSampleRepository mockGpsSampleRepo;
   late MockLapRepository mockLapRepo;
+  late MockTrackRepository mockTrackRepo;
   late MockTrackDiscoveryEngine mockTrackDiscovery;
   late MockLapDetectionEngine mockLapDetection;
   late MockAnalyticsEngine mockAnalytics;
@@ -59,6 +63,7 @@ void main() {
     mockSessionRepo = MockSessionRepository();
     mockGpsSampleRepo = MockGpsSampleRepository();
     mockLapRepo = MockLapRepository();
+    mockTrackRepo = MockTrackRepository();
     mockTrackDiscovery = MockTrackDiscoveryEngine();
     mockLapDetection = MockLapDetectionEngine();
     mockAnalytics = MockAnalyticsEngine();
@@ -67,6 +72,7 @@ void main() {
       sessionRepository: mockSessionRepo,
       gpsSampleRepository: mockGpsSampleRepo,
       lapRepository: mockLapRepo,
+      trackRepository: mockTrackRepo,
       trackDiscoveryEngine: mockTrackDiscovery,
       lapDetectionEngine: mockLapDetection,
       analyticsEngine: mockAnalytics,
@@ -232,7 +238,7 @@ void main() {
   // --- Tests ---
 
   group('PostSessionPipeline - full pipeline executes in correct order', () {
-    test('executes track discovery → lap detection → sector times → analytics in order',
+    test('executes track discovery → lap detection → circuit refinement → sector times → analytics in order',
         () async {
       final session = createSession();
       final samples = [
@@ -316,10 +322,10 @@ void main() {
       expect(callOrder, [
         'trackDiscovery',
         'lapDetection',
+        'circuitRefinement',
         'computeSectors',
         'sectorTimes',
         'persistLaps',
-        'circuitRefinement',
         'analytics',
       ]);
     });
