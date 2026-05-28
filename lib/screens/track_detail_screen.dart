@@ -27,6 +27,13 @@ class TrackDetailScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Track Detail'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.compare_arrows),
+            tooltip: 'Compare Laps',
+            onPressed: () => context.push('/lap-comparison/$trackId'),
+          ),
+        ],
       ),
       body: trackDetailAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),

@@ -7,6 +7,22 @@ import '../models/gps_sample.dart';
 import '../models/session_analytics.dart';
 import 'session_provider.dart';
 
+/// Provides raw GPS samples for a session, ordered by timestamp ascending.
+/// Used to resolve a touched speed-graph point to a map position.
+final sessionGpsSamplesProvider =
+    FutureProvider.family<List<({int timestamp, double latitude, double longitude})>, String>(
+        (ref, sessionId) async {
+  final repo = ref.watch(gpsSampleRepositoryProvider);
+  final samples = await repo.getBySessionId(sessionId);
+  return samples
+      .map((s) => (
+            timestamp: s.timestamp,
+            latitude: s.latitude,
+            longitude: s.longitude,
+          ))
+      .toList();
+});
+
 /// Provides aggregated lifetime statistics across all sessions.
 ///
 /// Re-fetches whenever [sessionsProvider] changes (new session recorded

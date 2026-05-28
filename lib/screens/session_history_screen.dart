@@ -6,6 +6,7 @@ import '../models/session.dart';
 import '../models/session_analytics.dart';
 import '../providers/analytics_provider.dart';
 import '../providers/session_provider.dart';
+import '../providers/track_provider.dart';
 import '../utils/time_formatter.dart';
 
 /// Session History screen displaying all recorded sessions in reverse
@@ -162,6 +163,7 @@ class _SessionCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final analyticsAsync = ref.watch(sessionAnalyticsProvider(session.id));
+    final trackAsync = ref.watch(sessionTrackProvider(session.id));
     final theme = Theme.of(context);
 
     return Dismissible(
@@ -282,6 +284,28 @@ class _SessionCard extends ConsumerWidget {
                   ),
                 ],
               ),
+              // Circuit name chip
+              if (session.trackId != null) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.flag_outlined,
+                      size: 13,
+                      color: theme.colorScheme.primary,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      trackAsync.valueOrNull?.name ?? 'Unnamed Track',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.primary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 12),
               // Metrics row
               analyticsAsync.when(

@@ -11,6 +11,7 @@ import 'screens/session_history_screen.dart';
 import 'screens/session_detail_screen.dart';
 import 'screens/track_detail_screen.dart';
 import 'screens/track_library_screen.dart';
+import 'screens/lap_comparison_screen.dart';
 import 'screens/settings_screen.dart';
 
 /// Wraps a child widget in a platform-appropriate Page.
@@ -65,6 +66,17 @@ final GoRouter router = GoRouter(
       pageBuilder: (context, state) {
         final trackId = state.pathParameters['id']!;
         return _buildPage(TrackDetailScreen(trackId: trackId), state);
+      },
+    ),
+    GoRoute(
+      path: '/lap-comparison/:trackId',
+      pageBuilder: (context, state) {
+        final trackId = state.pathParameters['trackId']!;
+        final sessionId = state.uri.queryParameters['sessionId'];
+        return _buildPage(
+          LapComparisonScreen(trackId: trackId, preSessionId: sessionId),
+          state,
+        );
       },
     ),
     GoRoute(

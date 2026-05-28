@@ -14,6 +14,7 @@ import '../providers/recording_provider.dart';
 import '../providers/session_provider.dart';
 import '../providers/track_provider.dart';
 import '../utils/time_formatter.dart';
+import '../widgets/track_painter.dart';
 
 String _formatSessionDate(int epochMs) {
   final date = DateTime.fromMillisecondsSinceEpoch(epochMs);
@@ -76,6 +77,7 @@ class SessionDetailScreen extends ConsumerStatefulWidget {
 
 class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
   bool _isReassigning = false;
+  int? _touchedTimestamp;
 
   @override
   Widget build(BuildContext context) {
@@ -119,6 +121,20 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
               data: (detail) => detail != null
                   ? () => _renameSession(context, ref, detail.session)
                   : null,
+              orElse: () => null,
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.compare_arrows),
+            tooltip: 'Compare Laps',
+            onPressed: detailAsync.maybeWhen(
+              data: (detail) {
+                final trackId = detail?.session.trackId;
+                if (trackId == null) return null;
+                return () => context.push(
+                      '/lap-comparison/$trackId?sessionId=${detail!.session.id}',
+                    );
+              },
               orElse: () => null,
             ),
           ),
@@ -199,21 +215,37 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
     List<SpeedTracePoint> speedTrace,
   ) {
     final hasLaps = detail.laps.isNotEmpty;
+    final trackAsync = ref.watch(sessionTrackProvider(widget.sessionId));
+    final trackName = trackAsync.valueOrNull?.name ??
+        (detail.session.trackId != null ? 'Unnamed Track' : null);
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
         // Overall session metrics
         if (detail.analytics != null)
-          _SessionMetricsSection(analytics: detail.analytics!),
+          _SessionMetricsSection(
+            analytics: detail.analytics!,
+            trackName: trackName,
+          ),
         if (detail.analytics != null) const SizedBox(height: 16),
 
         // Track visualization (dark background, sector colors)
-        _TrackMapSection(sessionId: widget.sessionId),
+        _TrackMapSection(
+          sessionId: widget.sessionId,
+          touchedTimestamp: _touchedTimestamp,
+        ),
         const SizedBox(height: 16),
 
         // Speed graph
-        _SpeedGraphSection(speedTrace: speedTrace),
+        _SpeedGraphSection(
+          speedTrace: speedTrace,
+          onTimestampTouched: (ts) {
+            if (_touchedTimestamp != ts) {
+              setState(() => _touchedTimestamp = ts);
+            }
+          },
+        ),
         const SizedBox(height: 16),
 
         // Lap list or "no laps detected" message
@@ -620,13 +652,29 @@ class _SessionDetailScreenState extends ConsumerState<SessionDetailScreen> {
 
 /// Displays the refined circuit polyline with sector colors on a dark background.
 class _TrackMapSection extends ConsumerWidget {
-  const _TrackMapSection({required this.sessionId});
+  const _TrackMapSection({
+    required this.sessionId,
+    this.touchedTimestamp,
+  });
 
   final String sessionId;
+  final int? touchedTimestamp;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final trackAsync = ref.watch(sessionTrackProvider(sessionId));
+    final samplesAsync = ref.watch(sessionGpsSamplesProvider(sessionId));
+
+    geo.LatLng? marker;
+    if (touchedTimestamp != null) {
+      final samples = samplesAsync.valueOrNull;
+      if (samples != null && samples.isNotEmpty) {
+        final pos = nearestPosition(samples, touchedTimestamp!);
+        if (pos != null) {
+          marker = geo.LatLng(pos.latitude, pos.longitude);
+        }
+      }
+    }
 
     return Card(
       color: const Color(0xFF2D2D2D),
@@ -663,10 +711,12 @@ class _TrackMapSection extends ConsumerWidget {
                   }
                   return CustomPaint(
                     size: const Size(double.infinity, 250),
-                    painter: _TrackLinePainter(
+                    painter: TrackLinePainter(
                       points: track.polyline,
                       sector1Fraction: track.sector1Fraction,
                       sector2Fraction: track.sector2Fraction,
+                      markerA: marker,
+                      markerAColor: Colors.white,
                     ),
                   );
                 },
@@ -681,9 +731,13 @@ class _TrackMapSection extends ConsumerWidget {
 
 /// Displays a speed-over-time line chart using fl_chart.
 class _SpeedGraphSection extends StatelessWidget {
-  const _SpeedGraphSection({required this.speedTrace});
+  const _SpeedGraphSection({
+    required this.speedTrace,
+    this.onTimestampTouched,
+  });
 
   final List<SpeedTracePoint> speedTrace;
+  final ValueChanged<int?>? onTimestampTouched;
 
   @override
   Widget build(BuildContext context) {
@@ -759,7 +813,18 @@ class _SpeedGraphSection extends StatelessWidget {
                 ),
               ],
               lineTouchData: LineTouchData(
+                touchCallback: (event, response) {
+                  if (onTimestampTouched == null) return;
+                  final spot = response?.lineBarSpots?.firstOrNull;
+                  if (spot != null) {
+                    final idx = spot.x.round().clamp(0, speedTrace.length - 1);
+                    onTimestampTouched!(speedTrace[idx].timestamp);
+                  } else {
+                    onTimestampTouched!(null);
+                  }
+                },
                 touchTooltipData: LineTouchTooltipData(
+                  getTooltipColor: (_) => Colors.black87,
                   getTooltipItems: (touchedSpots) {
                     return touchedSpots.map((spot) {
                       return LineTooltipItem(
@@ -1031,23 +1096,49 @@ class _NoLapsSection extends StatelessWidget {
 
 /// Displays overall session metrics (duration, distance, laps, speeds).
 class _SessionMetricsSection extends StatelessWidget {
-  const _SessionMetricsSection({required this.analytics});
+  const _SessionMetricsSection({
+    required this.analytics,
+    this.trackName,
+  });
 
   final SessionAnalytics analytics;
+  final String? trackName;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Session Overview',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Session Overview',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
+                ),
+                if (trackName != null) ...[
+                  Icon(
+                    Icons.flag_outlined,
+                    size: 14,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    trackName!,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ],
             ),
             const SizedBox(height: 12),
             Row(
@@ -1154,175 +1245,5 @@ class _MetricTile extends StatelessWidget {
         ),
       ],
     );
-  }
-}
-
-/// Custom painter that draws the refined circuit polyline with 3 sector colors
-/// on a dark background, similar to F1-style circuit diagrams.
-///
-/// Sector boundaries are placed at arc-length fractions (sector1Fraction, sector2Fraction).
-class _TrackLinePainter extends CustomPainter {
-  final List<geo.LatLng> points;
-  final double sector1Fraction;
-  final double sector2Fraction;
-
-  static const _sectorColors = [
-    Color(0xFFE53935), // Sector 1 - Red
-    Color(0xFF00E5FF), // Sector 2 - Cyan
-    Color(0xFFFFAB00), // Sector 3 - Orange/Yellow
-  ];
-
-  _TrackLinePainter({
-    required this.points,
-    required this.sector1Fraction,
-    required this.sector2Fraction,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (points.length < 2) return;
-
-    double minLat = points.first.latitude;
-    double maxLat = points.first.latitude;
-    double minLng = points.first.longitude;
-    double maxLng = points.first.longitude;
-
-    for (final p in points) {
-      if (p.latitude < minLat) minLat = p.latitude;
-      if (p.latitude > maxLat) maxLat = p.latitude;
-      if (p.longitude < minLng) minLng = p.longitude;
-      if (p.longitude > maxLng) maxLng = p.longitude;
-    }
-
-    final latRange = maxLat - minLat;
-    final lngRange = maxLng - minLng;
-
-    const padding = 0.1;
-    final effectiveWidth = size.width * (1 - 2 * padding);
-    final effectiveHeight = size.height * (1 - 2 * padding);
-
-    double scale;
-    double translateX;
-    double translateY;
-
-    if (latRange == 0 && lngRange == 0) {
-      scale = 1.0;
-      translateX = size.width / 2;
-      translateY = size.height / 2;
-    } else if (latRange == 0) {
-      scale = effectiveWidth / lngRange;
-      translateX = size.width * padding;
-      translateY = size.height / 2;
-    } else if (lngRange == 0) {
-      scale = effectiveHeight / latRange;
-      translateX = size.width / 2;
-      translateY = size.height * padding;
-    } else {
-      final scaleX = effectiveWidth / lngRange;
-      final scaleY = effectiveHeight / latRange;
-      scale = scaleX < scaleY ? scaleX : scaleY;
-      final actualWidth = lngRange * scale;
-      final actualHeight = latRange * scale;
-      translateX = (size.width - actualWidth) / 2;
-      translateY = (size.height - actualHeight) / 2;
-    }
-
-    // Convert LatLng to canvas offsets.
-    // Latitude increases upward; canvas Y increases downward.
-    final canvasPoints = points.map((p) {
-      final x = translateX + (p.longitude - minLng) * scale;
-      final y = translateY + (maxLat - p.latitude) * scale;
-      return Offset(x, y);
-    }).toList();
-
-    // Compute cumulative arc lengths to split sectors by fraction.
-    final segLengths = <double>[0.0];
-    for (int i = 1; i < canvasPoints.length; i++) {
-      segLengths
-          .add(segLengths.last + (canvasPoints[i] - canvasPoints[i - 1]).distance);
-    }
-    final totalLength = segLengths.last;
-
-    final s1End = totalLength * sector1Fraction.clamp(0.0, 1.0);
-    final s2End = totalLength * sector2Fraction.clamp(0.0, 1.0);
-    final boundaries = [0.0, s1End, s2End, totalLength];
-
-    for (int sector = 0; sector < 3; sector++) {
-      final segStart = boundaries[sector];
-      final segEnd = boundaries[sector + 1];
-      if (segEnd <= segStart) continue;
-
-      final paint = Paint()
-        ..color = _sectorColors[sector]
-        ..strokeWidth = 3.5
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..style = PaintingStyle.stroke;
-
-      final path = Path();
-      bool started = false;
-
-      for (int i = 0; i < canvasPoints.length - 1; i++) {
-        final arcA = segLengths[i];
-        final arcB = segLengths[i + 1];
-
-        if (arcB <= segStart || arcA >= segEnd) continue;
-
-        final a = canvasPoints[i];
-        final b = canvasPoints[i + 1];
-        final segLen = arcB - arcA;
-
-        final tA = segLen == 0
-            ? 0.0
-            : ((segStart - arcA) / segLen).clamp(0.0, 1.0);
-        final tB = segLen == 0
-            ? 1.0
-            : ((segEnd - arcA) / segLen).clamp(0.0, 1.0);
-
-        final pA = arcA < segStart ? Offset.lerp(a, b, tA)! : a;
-        final pB = arcB > segEnd ? Offset.lerp(a, b, tB)! : b;
-
-        if (!started) {
-          path.moveTo(pA.dx, pA.dy);
-          started = true;
-        } else {
-          path.lineTo(pA.dx, pA.dy);
-        }
-        path.lineTo(pB.dx, pB.dy);
-      }
-
-      if (started) canvas.drawPath(path, paint);
-    }
-
-    // Start/finish marker
-    if (canvasPoints.isNotEmpty) {
-      final markerPaint = Paint()
-        ..color = Colors.white
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(canvasPoints.first, 4, markerPaint);
-
-      final crossPaint = Paint()
-        ..color = Colors.white
-        ..strokeWidth = 1.5
-        ..strokeCap = StrokeCap.round;
-      const crossSize = 6.0;
-      canvas.drawLine(
-        Offset(canvasPoints.first.dx - crossSize, canvasPoints.first.dy),
-        Offset(canvasPoints.first.dx + crossSize, canvasPoints.first.dy),
-        crossPaint,
-      );
-      canvas.drawLine(
-        Offset(canvasPoints.first.dx, canvasPoints.first.dy - crossSize),
-        Offset(canvasPoints.first.dx, canvasPoints.first.dy + crossSize),
-        crossPaint,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _TrackLinePainter oldDelegate) {
-    return oldDelegate.points != points ||
-        oldDelegate.sector1Fraction != sector1Fraction ||
-        oldDelegate.sector2Fraction != sector2Fraction;
   }
 }
